@@ -298,8 +298,7 @@ const generateProductCards = (products: Product[]): string => {
           margin-top: auto;
         ">
           <a 
-            href="http://plugin.ijkstaging.com/product/${product.slug}" 
-            target="_blank" 
+            href="http://plugin.ijkstaging.com/product/${product.slug}"
             style='
               background: #2563EB;
               color: white;
@@ -319,8 +318,7 @@ const generateProductCards = (products: Product[]): string => {
           </a>
           
           <a 
-            href="http://plugin.ijkstaging.com/shop/?add-to-cart=${product.id}" 
-            target="_blank" 
+            href="http://plugin.ijkstaging.com/shop/?add-to-cart=${product.id}"
             style='
               background: #1e40af;
               color: white;
@@ -340,8 +338,7 @@ const generateProductCards = (products: Product[]): string => {
           </a>
           
           <a 
-            href="http://plugin.ijkstaging.com/checkout/?add-to-cart=${product.id}" 
-            target="_blank" 
+            href="http://plugin.ijkstaging.com/checkout/?add-to-cart=${product.id}"
             style='
               background: #065f46;
               color: white;
