@@ -214,7 +214,7 @@ const generateProductCards = (products: Product[]): string => {
 const generateSystemPrompt = (context: ChatMessage[], products: Product[]): string => {
   const lastMessages = context.slice(-3).map(m => `${m.role}: ${m.content}`).join('\n');
   
-  return `You are a helpful shopping assistant for a furniture store. Current conversation context:
+  return `You are a helpful shopping assistant for a store. Current conversation context:
 ${lastMessages}
 
 Available products (${products.length} shown):
