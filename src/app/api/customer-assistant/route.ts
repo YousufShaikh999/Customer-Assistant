@@ -219,7 +219,8 @@ const generateProductCards = (products: Product[]): string => {
     </div>
   `).join('');
 
-return `<div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 24px; margin: 24px 0; padding: 0 12px;">${cards}</div>`;
+  return `<div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 24px; margin: 24px 0; padding: 0 12px;">${cards}</div>`;
+};
 
 const generateSystemPrompt = (context: ChatMessage[], products: Product[]): string => {
   const lastMessages = context.slice(-3).map(m => `${m.role}: ${m.content}`).join('\n');
