@@ -23,7 +23,6 @@ const CustomerAssistant = () => {
 
   const toggleChat = () => {
     setIsOpen(!isOpen);
-    // Persist chat open state
     if (!isOpen) {
       sessionStorage.setItem('chatOpen', 'true');
     } else {
@@ -35,15 +34,31 @@ const CustomerAssistant = () => {
     setMessages(prev => [...prev, message]);
   };
 
+  // Handle redirects properly in both iframe and standalone contexts
+  const handleRedirect = (url: string) => {
+    try {
+      // Try to redirect through parent window (iframe context)
+      if (window.self !== window.top) {
+        window.parent.postMessage({
+          type: 'assistant-redirect',
+          url: url
+        }, 'http://plugin.ijkstaging.com/'); // In production, replace '*' with your specific domain
+      } else {
+        // Standalone context
+        window.location.href = url;
+      }
+    } catch (e) {
+      // Fallback for cases where postMessage fails
+      window.location.href = url;
+    }
+  };
+
   // Add global addToCartAndCheckout function
   useEffect(() => {
     (window as any).addToCartAndCheckout = (productId: number) => {
       console.log('Buy Now clicked for product ID:', productId);
-      // Direct redirect to add-to-cart URL - this bypasses CORS issues
-      window.location.href = `http://plugin.ijkstaging.com/shop/?add-to-cart=${productId}`;
+      handleRedirect(`http://plugin.ijkstaging.com/shop/?add-to-cart=${productId}`);
     };
-    
-    console.log('addToCartAndCheckout function attached to window');
     
     return () => {
       delete (window as any).addToCartAndCheckout;
@@ -52,9 +67,7 @@ const CustomerAssistant = () => {
 
   // Add starting message when the chat is opened
   useEffect(() => {
-    // Check if the chat is open and there are no messages yet
     if (isOpen && messages.length === 0) {
-      // Only add if there isn't already a welcome message
       const hasWelcomeMessage = messages.some(msg => 
         msg.content.includes("Hello! How can I assist you today?") && !msg.isUser
       );
@@ -82,13 +95,11 @@ const CustomerAssistant = () => {
     
     if (savedMessages) {
       const parsedMessages = JSON.parse(savedMessages);
-      // Convert string timestamps back to Date objects
       const messagesWithDates = parsedMessages.map((msg: any) => ({
         ...msg,
         timestamp: new Date(msg.timestamp)
       }));
       setMessages(messagesWithDates);
-      sessionStorage.removeItem('chatMessages');
     }
     
     if (chatOpen) {
@@ -97,10 +108,17 @@ const CustomerAssistant = () => {
   }, []);
 
   const renderMessageContent = (content: string) => {
-    const sanitized = DOMPurify.sanitize(content, {
+    // Process content to ensure proper link handling
+    const processedContent = content
+      .replace(/\u003ca /g, '\u003ca class="assistant-product-link" ')
+      .replace(/window\.top\.location\.href=/g, 'handleRedirect(')
+      .replace(/'\);?/g, ')');
+
+    const sanitized = DOMPurify.sanitize(processedContent, {
       ADD_TAGS: ['img', 'button'],
-      ADD_ATTR: ['style', 'src', 'alt', 'onclick']
+      ADD_ATTR: ['style', 'src', 'alt', 'onclick', 'class']
     });
+
     return <div dangerouslySetInnerHTML={{ __html: sanitized }} />;
   };
 
@@ -179,9 +197,27 @@ const CustomerAssistant = () => {
         ]));
         sessionStorage.setItem('chatOpen', 'true');
 
-        setTimeout(() => {
-          window.location.href = data.redirect;
-        }, 1500);
+        handleRedirect(data.redirect);
+        return;
+      }
+
+      if (data.action && data.action.type === 'redirect') {
+        const aiMessage = {
+          id: Date.now().toString(),
+          content: data.reply,
+          isUser: false,
+          timestamp: new Date()
+        };
+        addMessage(aiMessage);
+
+        sessionStorage.setItem('chatMessages', JSON.stringify([
+          ...messages,
+          userMessage,
+          aiMessage
+        ]));
+        sessionStorage.setItem('chatOpen', 'true');
+
+        handleRedirect(data.action.url);
         return;
       }
 
@@ -209,13 +245,13 @@ const CustomerAssistant = () => {
         e.preventDefault();
         const href = (target as HTMLAnchorElement).getAttribute('href');
         if (href) {
-          // Persist chat state
           sessionStorage.setItem('chatMessages', JSON.stringify(messages));
           sessionStorage.setItem('chatOpen', 'true');
-          router.push(href);
+          handleRedirect(href);
         }
       }
     };
+
     const chatArea = document.getElementById('assistant-chat-area');
     if (chatArea) {
       chatArea.addEventListener('click', handleLinkClick);
@@ -225,7 +261,7 @@ const CustomerAssistant = () => {
         chatArea.removeEventListener('click', handleLinkClick);
       }
     };
-  }, [messages, router]);
+  }, [messages]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -279,7 +315,7 @@ const CustomerAssistant = () => {
                   : 'bg-gray-100 text-gray-800 rounded-bl-none shadow-md'}`}
               >
                 {!message.isUser ? (
-                  renderMessageContent(message.content.replace(/\u003ca /g, '\u003ca class="assistant-product-link" '))
+                  renderMessageContent(message.content)
                 ) : (
                   <p>{message.content}</p>
                 )}
