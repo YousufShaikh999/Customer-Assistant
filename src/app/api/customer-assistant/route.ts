@@ -126,9 +126,9 @@ const selectProducts = (
   // First filter by keyword if provided
   let filteredProducts = keyword
     ? allProducts.filter(p =>
-        (p.title.toLowerCase().includes(keyword) ||
-         p.description.toLowerCase().includes(keyword)) &&
-        !previouslyShownIds.includes(p.id))
+      (p.title.toLowerCase().includes(keyword) ||
+        p.description.toLowerCase().includes(keyword)) &&
+      !previouslyShownIds.includes(p.id))
     : allProducts.filter(p => !previouslyShownIds.includes(p.id));
 
   // If no keyword matches or not enough products, fall back to all available products
@@ -297,8 +297,10 @@ const generateProductCards = (products: Product[]): string => {
           gap: 8px;
           margin-top: auto;
         ">
-          <a 
-            href="http://plugin.ijkstaging.com/product/${product.slug}"
+          <button 
+            onclick="window.top.location.href='http://plugin.ijkstaging.com/product/${product.slug}'"
+            target="_blank" 
+            rel="noopener noreferrer"
             style='
               background: #2563EB;
               color: white;
@@ -315,10 +317,12 @@ const generateProductCards = (products: Product[]): string => {
             onmouseout="this.style.background='#2563EB'"
           >
             View Details
-          </a>
+          </button>
           
-          <a 
-            href="http://plugin.ijkstaging.com/shop/?add-to-cart=${product.id}"
+          <button 
+            onclick="window.top.location.href='http://plugin.ijkstaging.com/shop/?add-to-cart=${product.id}'" 
+            target="_blank" 
+            rel="noopener noreferrer"
             style='
               background: #1e40af;
               color: white;
@@ -335,10 +339,12 @@ const generateProductCards = (products: Product[]): string => {
             onmouseout="this.style.background='#1e40af'"
           >
             Add to Cart
-          </a>
+          </button>
           
-          <a 
-            href="http://plugin.ijkstaging.com/checkout/?add-to-cart=${product.id}"
+          <button 
+            onclick="window.top.location.href='http://plugin.ijkstaging.com/checkout/?add-to-cart=${product.id}'" 
+            target="_blank" 
+            rel="noopener noreferrer"
             style='
               background: #065f46;
               color: white;
@@ -355,7 +361,7 @@ const generateProductCards = (products: Product[]): string => {
             onmouseout="this.style.background='#065f46'"
           >
             Buy Now
-          </a>
+          </button>
         </div>
       </div>
     </div>
@@ -381,8 +387,8 @@ const generateProductCards = (products: Product[]): string => {
 
 const generateSystemPrompt = (context: ChatMessage[], products: Product[]): string => {
   const lastMessages = context.slice(-3).map(m => `${m.role}: ${m.content}`).join('\n');
-  
-  return `You are a helpful shopping assistant for a furniture store. Current conversation context:
+
+  return `You are a helpful shopping assistant for a store. Current conversation context:
 ${lastMessages}
 
 Available products (${products.length} shown):
@@ -420,11 +426,11 @@ export async function POST(req: NextRequest) {
 
     // Initialize conversation if empty
     const updatedHistory: ChatMessage[] = history.length === 0
-      ? [{ 
-          role: 'assistant', 
-          content: "Hello! I'm your furniture shopping assistant. How can I help you today?", 
-          metadata: {} 
-        }]
+      ? [{
+        role: 'assistant',
+        content: "Hello! I'm your furniture shopping assistant. How can I help you today?",
+        metadata: {}
+      }]
       : history as ChatMessage[];
 
     try {
@@ -491,19 +497,19 @@ export async function POST(req: NextRequest) {
       // Determine what products to show based on conversation
       const desiredCount = extractProductCount(query);
       const keyword = extractKeyword(query);
-      
+
       // Check if we have a previous product selection in the conversation
       const previousSelection = updatedHistory
         .slice()
         .reverse()
         .find(msg => msg.metadata?.products);
-      
+
       const previouslyShownIds = getPreviouslyShownIds(updatedHistory);
       // Filter products based on keyword and exclude previously shown
       let filteredProducts = keyword
         ? allProductsWithImages.filter(p =>
           (p.title.toLowerCase().includes(keyword) ||
-          p.description.toLowerCase().includes(keyword)) &&
+            p.description.toLowerCase().includes(keyword)) &&
           !previouslyShownIds.includes(p.id)
         ) : allProductsWithImages.filter(p => !previouslyShownIds.includes(p.id));
 
@@ -523,15 +529,15 @@ export async function POST(req: NextRequest) {
 
         switch (action) {
           case 'view':
-            redirectUrl = `http://plugin.ijkstaging.com/product/${product.slug}/`;
+            redirectUrl = `window.top.location.href='http://plugin.ijkstaging.com/product/${product.slug}/`;
             actionMessage = `Taking you to the ${product.title} page...`;
             break;
           case 'add_to_cart':
-            redirectUrl = `http://plugin.ijkstaging.com/shop/?add-to-cart=${product.id}`;
+            redirectUrl = `window.top.location.href='http://plugin.ijkstaging.com/shop/?add-to-cart=${product.id}'`;
             actionMessage = `Added ${product.title} to your cart!`;
             break;
           case 'buy':
-            redirectUrl = `http://plugin.ijkstaging.com/checkout/?add-to-cart=${product.id}`;
+            redirectUrl = `window.top.location.href='http://plugin.ijkstaging.com/checkout/?add-to-cart=${product.id}'`;
             actionMessage = `Taking you to checkout with ${product.title}...`;
             break;
         }
@@ -540,16 +546,16 @@ export async function POST(req: NextRequest) {
           reply: actionMessage,
           redirect: redirectUrl,
           history: [
-            ...updatedHistory, 
-            { 
-              role: 'user', 
+            ...updatedHistory,
+            {
+              role: 'user',
               content: query,
               metadata: { productId: product.id }
             },
-            { 
-              role: 'assistant', 
+            {
+              role: 'assistant',
               content: actionMessage,
-              metadata: { 
+              metadata: {
                 action,
                 productId: product.id
               }
@@ -588,16 +594,16 @@ export async function POST(req: NextRequest) {
         reply: fullReply,
         products: filteredProducts,
         history: [
-          ...updatedHistory, 
-          { 
-            role: 'user', 
+          ...updatedHistory,
+          {
+            role: 'user',
             content: query,
             metadata: { keyword }
           },
-          { 
-            role: 'assistant', 
+          {
+            role: 'assistant',
             content: fullReply,
-            metadata: { 
+            metadata: {
               products: filteredProducts,
               count: desiredCount,
               keyword
