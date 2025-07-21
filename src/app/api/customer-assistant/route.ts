@@ -195,20 +195,191 @@ const generateProductCards = (products: Product[]): string => {
   if (!products.length) return '';
 
   const cards = products.map(product => `
-    <div style='background:#f9f9f9; padding:16px; border:1px solid #ddd; border-radius:8px; margin-bottom:12px; display:flex; flex-direction:column; align-items:center; text-align:center; box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);'>
-      ${product.image_url ? `<img src='${product.image_url}' style='max-width:100%; height:auto; max-height:200px; margin-bottom:12px; border-radius:8px;' alt='${product.title}' />` : ''}
-      <strong style='font-size:1.2rem; font-weight:bold; color:#333;'>${product.title}</strong>
-      <p style='font-size:1rem; color:#555; margin:8px 0;'>${product.description.substring(0, 100)}${product.description.length > 100 ? '...' : ''}</p>
-      <p style='font-size:1.1rem; color:#333; font-weight:bold;'>Price: $${product.price}</p>
-      <div style="display:flex; flex-wrap:wrap; justify-content:center; gap:10px;">
-        <a href='http://plugin.ijkstaging.com/product/${product.slug}' target='_blank' style='background:#2563EB; color:#fff; padding:10px 20px; border-radius:6px; text-decoration:none;'>View Product</a>
-        <a href='http://plugin.ijkstaging.com/shop/?add-to-cart=${product.id}' target='_blank' style='background:#2563EB; color:#fff; padding:10px 20px; border-radius:6px; text-decoration:none;'>Add to Cart</a>
-        <a href='http://plugin.ijkstaging.com/checkout/?add-to-cart=${product.id}' target='_blank' style='background:#059669; color:#fff; padding:10px 20px; border-radius:6px; text-decoration:none;'>Buy Now</a>
+    <div class="product-card" style='
+      background: white;
+      padding: 16px;
+      border-radius: 12px;
+      margin-bottom: 16px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+      height: 100%;
+    '>
+      <div class="product-image-container" style='
+        width: 100%;
+        height: 200px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-bottom: 12px;
+        overflow: hidden;
+        border-radius: 8px;
+        background: #f5f5f5;
+      '>
+        ${product.image_url ? `
+          <img 
+            src="${product.image_url}" 
+            alt="${product.title}"
+            loading="lazy"
+            style='
+              max-width: 100%;
+              max-height: 100%;
+              object-fit: contain;
+              transition: opacity 0.3s ease;
+              opacity: 0;
+            '
+            onload="this.style.opacity='1'"
+          />
+          <noscript>
+            <img 
+              src="${product.image_url}" 
+              alt="${product.title}"
+              style='
+                max-width: 100%;
+                max-height: 100%;
+                object-fit: contain;
+              '
+            />
+          </noscript>
+        ` : `
+          <div style='
+            width: 100%;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #eaeaea;
+            color: #999;
+            font-size: 14px;
+          '>
+            No image available
+          </div>
+        `}
+      </div>
+      
+      <div style='flex: 1; display: flex; flex-direction: column; width: 100%;'>
+        <h3 style='
+          font-size: 1.1rem;
+          font-weight: 600;
+          color: #333;
+          margin: 0 0 8px 0;
+          line-height: 1.3;
+        '>
+          ${product.title}
+        </h3>
+        
+        <p style='
+          font-size: 0.9rem;
+          color: #666;
+          margin: 0 0 12px 0;
+          line-height: 1.4;
+          flex-grow: 1;
+        '>
+          ${product.description.substring(0, 100)}${product.description.length > 100 ? '...' : ''}
+        </p>
+        
+        <p style='
+          font-size: 1.1rem;
+          color: #2d3748;
+          font-weight: 700;
+          margin: 0 0 16px 0;
+        '>
+          $${product.price}
+        </p>
+        
+        <div style="
+          display: flex;
+          flex-wrap: wrap;
+          justify-content: center;
+          gap: 8px;
+          margin-top: auto;
+        ">
+          <a 
+            href="http://plugin.ijkstaging.com/product/${product.slug}" 
+            target="_blank" 
+            style='
+              background: #2563EB;
+              color: white;
+              padding: 10px 16px;
+              border-radius: 6px;
+              text-decoration: none;
+              font-size: 0.9rem;
+              transition: background 0.2s ease;
+              flex: 1;
+              min-width: 120px;
+              text-align: center;
+            '
+            onmouseover="this.style.background='#1d4ed8'"
+            onmouseout="this.style.background='#2563EB'"
+          >
+            View Details
+          </a>
+          
+          <a 
+            href="http://plugin.ijkstaging.com/shop/?add-to-cart=${product.id}" 
+            target="_blank" 
+            style='
+              background: #1e40af;
+              color: white;
+              padding: 10px 16px;
+              border-radius: 6px;
+              text-decoration: none;
+              font-size: 0.9rem;
+              transition: background 0.2s ease;
+              flex: 1;
+              min-width: 120px;
+              text-align: center;
+            '
+            onmouseover="this.style.background='#1e3a8a'"
+            onmouseout="this.style.background='#1e40af'"
+          >
+            Add to Cart
+          </a>
+          
+          <a 
+            href="http://plugin.ijkstaging.com/checkout/?add-to-cart=${product.id}" 
+            target="_blank" 
+            style='
+              background: #065f46;
+              color: white;
+              padding: 10px 16px;
+              border-radius: 6px;
+              text-decoration: none;
+              font-size: 0.9rem;
+              transition: background 0.2s ease;
+              flex: 1;
+              min-width: 120px;
+              text-align: center;
+            '
+            onmouseover="this.style.background='#064e3b'"
+            onmouseout="this.style.background='#065f46'"
+          >
+            Buy Now
+          </a>
+        </div>
       </div>
     </div>
   `).join('');
 
-  return `<div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 20px; margin: 20px 0;">${cards}</div>`;
+  return `
+    <style>
+      .product-card:hover {
+        transform: translateY(-4px);
+        box-shadow: 0 6px 16px rgba(0, 0, 0, 0.12);
+      }
+    </style>
+    <div style="
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 24px;
+      margin: 24px 0;
+    ">
+      ${cards}
+    </div>
+  `;
 };
 
 const generateSystemPrompt = (context: ChatMessage[], products: Product[]): string => {
