@@ -6,14 +6,13 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-// Enhanced Type Definitions
 interface ProductRow extends mysql.RowDataPacket {
   product_id: number;
   title: string;
   price: number;
   description: string;
   thumbnail_id?: string;
-  post_name: string; // Added for product slug
+  post_name: string;
 }
 
 interface Product {
@@ -22,12 +21,19 @@ interface Product {
   price: string;
   description: string;
   image_url?: string;
-  slug: string; // Added for product slug
+  slug: string;
 }
 
 interface ChatMessage {
-  role: 'user' | 'assistant';
+  role: 'user' | 'assistant' | 'system';
   content: string;
+  metadata?: {
+    products?: Product[];
+    action?: 'view' | 'add_to_cart' | 'buy';
+    productId?: number;
+    count?: number;
+    keyword?: string;
+  };
 }
 
 interface APIResponse {
@@ -36,20 +42,21 @@ interface APIResponse {
   history?: ChatMessage[];
   error?: string;
   debug?: any;
-  redirect?: string; // Added for redirect URLs
+  redirect?: string;
 }
 
+
+
 const requestSchema = z.object({
-  query: z.string().min(1, "Query cannot be empty").max(500, "Query too long"),
+  query: z.string().min(1, "Query cannot be empty").max(300, "Query too long"),
   history: z.array(z.object({
-    role: z.enum(['user', 'assistant']),
-    content: z.string()
+    role: z.enum(['user', 'assistant', 'system']),
+    content: z.string(),
+    metadata: z.any().optional()
   })).optional()
 });
 
-// Initialize services with better error handling
 const initializeServices = () => {
-  // Verify required environment variables
   const requiredEnvVars = ['OPENAI_API_KEY', 'WP_DB_HOST', 'WP_DB_USER', 'WP_DB_PASSWORD', 'WP_DB_NAME'];
   const missingVars = requiredEnvVars.filter(varName => !process.env[varName]);
 
@@ -57,13 +64,11 @@ const initializeServices = () => {
     throw new Error(`Missing environment variables: ${missingVars.join(', ')}`);
   }
 
-  // Initialize OpenAI
   const openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY!,
-    timeout: 20000 // 20 second timeout
+    timeout: 20000
   });
 
-  // Initialize Database Pool
   const pool = mysql.createPool({
     host: process.env.WP_DB_HOST,
     user: process.env.WP_DB_USER,
@@ -86,22 +91,90 @@ try {
   throw new Error("Service initialization error");
 }
 
-// Helper function to detect action words
-const detectAction = (query: string, products: Product[]): {action: 'view' | 'add_to_cart' | 'buy' | null, product: Product | null} => {
+const extractProductCount = (query: string): number => {
+  const countMatch = query.match(/(?:show|recommend|give me|i want|display)\s+(\d+)/i);
+  return countMatch ? Math.min(parseInt(countMatch[1]), 10) : 3; // Limit to max 10 products
+};
+
+const extractKeyword = (query: string): string | null => {
+  const keywords = ['chair', 'sofa', 'bed', 'table', 'lamp', 'couch', 'furniture', 'desk', 'wardrobe', 'shelf'];
+  const lower = query.toLowerCase();
+  return keywords.find(k => lower.includes(k)) || null;
+};
+
+const getPreviouslyShownIds = (history: ChatMessage[]): number[] => {
+  return history
+    .filter(msg => msg.metadata?.products)
+    .flatMap(msg => msg.metadata?.products?.map((p: Product) => p.id) ?? []);
+};
+
+const shuffleArray = <T>(array: T[]): T[] => {
+  const newArray = [...array];
+  for (let i = newArray.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [newArray[i], newArray[j]] = [newArray[j], newArray[i]];
+  }
+  return newArray;
+};
+
+const selectProducts = (
+  allProducts: Product[],
+  desiredCount: number,
+  keyword: string | null,
+  previouslyShownIds: number[]
+): Product[] => {
+  // First filter by keyword if provided
+  let filteredProducts = keyword
+    ? allProducts.filter(p =>
+        (p.title.toLowerCase().includes(keyword) ||
+         p.description.toLowerCase().includes(keyword)) &&
+        !previouslyShownIds.includes(p.id))
+    : allProducts.filter(p => !previouslyShownIds.includes(p.id));
+
+  // If no keyword matches or not enough products, fall back to all available products
+  if (filteredProducts.length < desiredCount) {
+    filteredProducts = allProducts.filter(p => !previouslyShownIds.includes(p.id));
+  }
+
+  // If still not enough, start repeating but maintain the count
+  if (filteredProducts.length < desiredCount) {
+    const needed = desiredCount - filteredProducts.length;
+    const repeatedProducts = allProducts
+      .filter(p => !filteredProducts.some(fp => fp.id === p.id))
+      .slice(0, needed);
+    filteredProducts = [...filteredProducts, ...repeatedProducts];
+  }
+
+  // Shuffle and select the desired count
+  return shuffleArray(filteredProducts).slice(0, desiredCount);
+};
+const detectAction = (query: string, products: Product[], context: ChatMessage[]): { action: 'view' | 'add_to_cart' | 'buy' | null, product: Product | null } => {
   const lowerQuery = query.toLowerCase();
-  const viewWords = ['view', 'show', 'details', 'see', 'look at', 'display'];
-  const cartWords = ['add to cart', 'put in cart', 'in cart', 'cart', 'add it'];
-  const buyWords = ['buy', 'buy now', 'purchase', 'checkout', 'order'];
-  
-  // Find the most relevant product in the query
-  const matchedProduct = products.find(product => 
+  const viewWords = ['view', 'show', 'details', 'see', 'look at', 'display', 'more about'];
+  const cartWords = ['add to cart', 'put in cart', 'in cart', 'cart', 'add it', 'include in cart'];
+  const buyWords = ['buy', 'buy now', 'purchase', 'checkout', 'order', 'get it now'];
+
+  // First try to find product mentioned in current query
+  let matchedProduct = products.find(product =>
     lowerQuery.includes(product.title.toLowerCase()) ||
     lowerQuery.includes(product.slug.toLowerCase())
   );
 
+  // If no product mentioned, look for previously discussed product
   if (!matchedProduct) {
-    return { action: null, product: null };
+    const lastDiscussedProduct = context
+      .slice()
+      .reverse()
+      .find(msg => msg.metadata?.products || msg.metadata?.productId);
+
+    if (lastDiscussedProduct?.metadata?.products) {
+      matchedProduct = lastDiscussedProduct.metadata.products[0];
+    } else if (lastDiscussedProduct?.metadata?.productId) {
+      matchedProduct = products.find(p => p.id === lastDiscussedProduct.metadata?.productId);
+    }
   }
+
+  if (!matchedProduct) return { action: null, product: null };
 
   if (viewWords.some(word => lowerQuery.includes(word))) {
     return { action: 'view', product: matchedProduct };
@@ -118,40 +191,78 @@ const detectAction = (query: string, products: Product[]): {action: 'view' | 'ad
   return { action: null, product: matchedProduct };
 };
 
+const generateProductCards = (products: Product[]): string => {
+  if (!products.length) return '';
+
+  const cards = products.map(product => `
+    <div style='background:#f9f9f9; padding:16px; border:1px solid #ddd; border-radius:8px; margin-bottom:12px; display:flex; flex-direction:column; align-items:center; text-align:center; box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);'>
+      ${product.image_url ? `<img src='${product.image_url}' style='max-width:100%; height:auto; max-height:200px; margin-bottom:12px; border-radius:8px;' alt='${product.title}' />` : ''}
+      <strong style='font-size:1.2rem; font-weight:bold; color:#333;'>${product.title}</strong>
+      <p style='font-size:1rem; color:#555; margin:8px 0;'>${product.description.substring(0, 100)}${product.description.length > 100 ? '...' : ''}</p>
+      <p style='font-size:1.1rem; color:#333; font-weight:bold;'>Price: $${product.price}</p>
+      <div style="display:flex; flex-wrap:wrap; justify-content:center; gap:10px;">
+        <a href='http://plugin.ijkstaging.com/product/${product.slug}' target='_blank' style='background:#2563EB; color:#fff; padding:10px 20px; border-radius:6px; text-decoration:none;'>View Product</a>
+        <a href='http://plugin.ijkstaging.com/shop/?add-to-cart=${product.id}' target='_blank' style='background:#2563EB; color:#fff; padding:10px 20px; border-radius:6px; text-decoration:none;'>Add to Cart</a>
+        <a href='http://plugin.ijkstaging.com/checkout/?add-to-cart=${product.id}' target='_blank' style='background:#059669; color:#fff; padding:10px 20px; border-radius:6px; text-decoration:none;'>Buy Now</a>
+      </div>
+    </div>
+  `).join('');
+
+  return `<div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 20px; margin: 20px 0;">${cards}</div>`;
+};
+
+const generateSystemPrompt = (context: ChatMessage[], products: Product[]): string => {
+  const lastMessages = context.slice(-3).map(m => `${m.role}: ${m.content}`).join('\n');
+  
+  return `You are a helpful shopping assistant for a furniture store. Current conversation context:
+${lastMessages}
+
+Available products (${products.length} shown):
+${products.map(p => `- ${p.title} ($${p.price})`).join('\n')}
+
+Guidelines:
+1. Be conversational and friendly
+2. Only recommend products from the available list
+3. If user asks about a specific product, provide details
+4. If user wants to view/add/buy a product, confirm the action
+5. Keep responses concise but helpful
+6. Remember previous messages in the conversation`;
+};
+
 export async function POST(req: NextRequest) {
   const startTime = Date.now();
   let connection: mysql.PoolConnection | null = null;
 
   try {
-    // Parse and validate request
+    connection = await services.pool.getConnection();
     const body = await req.json().catch(() => {
       throw new Error("Invalid JSON body");
     });
 
     const validationResult = requestSchema.safeParse(body);
     if (!validationResult.success) {
-      return NextResponse.json(
-        {
-          reply: "Invalid request format",
-          error: validationResult.error.flatten()
-        },
-        { status: 400 }
-      );
+      return NextResponse.json({
+        reply: "Invalid request format",
+        error: validationResult.error.flatten()
+      }, { status: 400 });
     }
 
     const { query, history = [] } = validationResult.data;
 
-    // Add a starting message to the history if it's the first interaction
-    const updatedHistory = history.length === 0
-      ? [{ role: 'assistant', content: "Hello! I'm your shopping assistant. How can I assist you today?" }]
-      : history;
+    // Initialize conversation if empty
+    const updatedHistory: ChatMessage[] = history.length === 0
+      ? [{ 
+          role: 'assistant', 
+          content: "Hello! I'm your furniture shopping assistant. How can I help you today?", 
+          metadata: {} 
+        }]
+      : history as ChatMessage[];
 
-    // Database operations
     try {
       connection = await services.pool.getConnection();
-      console.log("Database connection established");
 
-      const [products] = await connection.query<ProductRow[]>(`
+      // Get all products from database
+      const [allProductsRaw] = await connection.query<ProductRow[]>(`
         SELECT 
           p.ID as product_id,
           p.post_title as title,
@@ -165,19 +276,19 @@ export async function POST(req: NextRequest) {
         WHERE p.post_type = 'product' 
         AND p.post_status = 'publish'
         AND pm_price.meta_value IS NOT NULL
-        LIMIT 10
+        ORDER BY RAND() -- Randomize the order each time
+        LIMIT 100
       `);
 
-      if (!products.length) {
+      if (!allProductsRaw.length) {
         return NextResponse.json({
           reply: "Currently we don't have any products available. Please check back later.",
           history: updatedHistory
         });
       }
-
-      // Get product images for products that have thumbnail IDs
+      // Get product images
       const productImages = new Map<number, string>();
-      const thumbnailIds = products
+      const thumbnailIds = allProductsRaw
         .filter(p => p.thumbnail_id)
         .map(p => p.thumbnail_id);
 
@@ -198,8 +309,8 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      // Transform products to include image URLs and slugs
-      const productsWithImages: Product[] = products.map(p => ({
+      // Prepare product data
+      const allProductsWithImages: Product[] = allProductsRaw.map(p => ({
         id: p.product_id,
         title: p.title,
         price: p.price.toString(),
@@ -208,127 +319,142 @@ export async function POST(req: NextRequest) {
         slug: p.post_name
       }));
 
-      // Check for direct actions before processing with AI
-      const { action, product } = detectAction(query, productsWithImages);
+      // Determine what products to show based on conversation
+      const desiredCount = extractProductCount(query);
+      const keyword = extractKeyword(query);
       
+      // Check if we have a previous product selection in the conversation
+      const previousSelection = updatedHistory
+        .slice()
+        .reverse()
+        .find(msg => msg.metadata?.products);
+      
+      const previouslyShownIds = getPreviouslyShownIds(updatedHistory);
+      // Filter products based on keyword and exclude previously shown
+      let filteredProducts = keyword
+        ? allProductsWithImages.filter(p =>
+          (p.title.toLowerCase().includes(keyword) ||
+          p.description.toLowerCase().includes(keyword)) &&
+          !previouslyShownIds.includes(p.id)
+        ) : allProductsWithImages.filter(p => !previouslyShownIds.includes(p.id));
+
+      // If we filtered out all products, reset the filter but keep the count
+      if (filteredProducts.length === 0) {
+        filteredProducts = allProductsWithImages.slice(0, desiredCount);
+      } else {
+        filteredProducts = filteredProducts.slice(0, desiredCount);
+      }
+
+      // Check for actions (view/add/buy)
+      const { action, product } = detectAction(query, allProductsWithImages, updatedHistory);
+
       if (action && product) {
         let redirectUrl = '';
-        
+        let actionMessage = '';
+
         switch (action) {
           case 'view':
             redirectUrl = `http://plugin.ijkstaging.com/product/${product.slug}/`;
+            actionMessage = `Taking you to the ${product.title} page...`;
             break;
           case 'add_to_cart':
             redirectUrl = `http://plugin.ijkstaging.com/shop/?add-to-cart=${product.id}`;
+            actionMessage = `Added ${product.title} to your cart!`;
             break;
           case 'buy':
             redirectUrl = `http://plugin.ijkstaging.com/checkout/?add-to-cart=${product.id}`;
+            actionMessage = `Taking you to checkout with ${product.title}...`;
             break;
         }
 
         return NextResponse.json({
-          reply: `Redirecting you to ${product.title}...`,
+          reply: actionMessage,
           redirect: redirectUrl,
-          history: [...updatedHistory, { role: 'user', content: query }, { role: 'assistant', content: `Redirecting to ${product.title}` }]
+          history: [
+            ...updatedHistory, 
+            { 
+              role: 'user', 
+              content: query,
+              metadata: { productId: product.id }
+            },
+            { 
+              role: 'assistant', 
+              content: actionMessage,
+              metadata: { 
+                action,
+                productId: product.id
+              }
+            }
+          ]
         });
       }
 
-      // Prepare AI context (keep it concise to reduce processing time)
-      const productContext = productsWithImages
-        .map(p => `ID: ${p.id}\nTitle: ${p.title}\nSlug: ${p.slug}\nPrice: $${p.price}\nDescription: ${p.description.substring(0, 200)}${p.image_url ? `\nImage: ${p.image_url}` : ''}`)
-        .join("\n\n---\n");
+      // Generate product cards HTML
+      const productCardsHTML = generateProductCards(filteredProducts);
 
-      const conversationContext = updatedHistory
-        .slice(-5)
-        .map(msg => `${msg.role}: ${msg.content}`)
-        .join('\n');
+      // Generate system prompt for OpenAI
+      const systemPrompt = generateSystemPrompt(updatedHistory, filteredProducts);
 
-      const prompt = `You are a friendly, helpful shopping assistant of Shopping Store. Your job is to sound like a real person—warm, engaging, and natural. Use contractions, occasional fillers (like "let's see", "hmm", "oh!"), and polite enthusiasm. Carry the conversation forward, referencing what the customer said before.Check customers query and strictly match the product if product and query are not matching strictly then dont show products. Match products and query like chair to chair, sofa to sofa if product is not perfectly matching query then dont show. Dont show table or other if query have chair also for other types of situations. If you need to clarify, ask a friendly follow-up question. Use conversational transitions ("By the way", "Oh, and...").
+      // Prepare messages for OpenAI
+      const messages: OpenAI.ChatCompletionMessageParam[] = [
+        { role: 'system', content: systemPrompt },
+        ...updatedHistory
+          .filter(msg => msg.role !== 'system')
+          .map(msg => ({ role: msg.role, content: msg.content } as const)),
+        { role: 'user', content: query }
+      ];
 
-Previous conversation:
-${conversationContext || 'No previous conversation'}
-
-Available products:
-${productContext}
-
-Customer question: "${query}"
-
-Guidelines:
-- Be friendly but professional
-- Dont recommend products until user asks for recommendations
-- If user asks to recommend products, provide at least 3 relevant ones
-- If user asks to show some products, provide at least 3
-- If user asks for recommendations, provide at least 3 products
-- If user asks to provide specific amount of products, provide that many
-- If user asks for a specific product, provide that product plus 2-3 similar ones
-- Include product IDs when available
-- Keep individual product descriptions brief to fit more products
-- After providing recommendations, always ask if they need help with anything else
-
-
-**IMPORTANT: When recommending products, always use this HTML format exactly:**
-
-<ul style="list-style-type: none; padding: 0;">
-  <li style='background:#f9f9f9; padding:16px; border:1px solid #ddd; border-radius:8px; margin-bottom:12px; display:flex; flex-direction:column; align-items:center; text-align:center; box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);'>
-    <img src='http://plugin.ijkstaging.com/wp-content/uploads/2025/07/wp_dummy_content_generator_PRODUCT_ID.jpg' 
-         style='max-width:100%; height:auto; max-height:200px; margin-bottom:12px; border-radius:8px;' alt='PRODUCT_TITLE' />
-    <strong style='font-size:1.2rem; font-weight:bold; color:#333;'>PRODUCT_TITLE</strong>
-    <p style='font-size:1rem; color:#555; margin:8px 0;'>Brief reason why this fits their needs</p>
-    <p style='font-size:1.1rem; color:#333; font-weight:bold; margin-bottom:12px;'>Price: $PRODUCT_PRICE</p>
-    <div style="display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; width: 100%;">
-      <a href='http://plugin.ijkstaging.com/product/PRODUCT_SLUG' target='_blank'
-         style='background:#2563EB; color:#fff; padding:10px 20px; border-radius:6px; text-decoration:none; font-size:1rem;'>View Product</a>
-      <a href='http://plugin.ijkstaging.com/shop/?add-to-cart=PRODUCT_ID' target='_blank'
-         style='background:#2563EB; color:#fff; padding:10px 20px; border-radius:6px; text-decoration:none; font-size:1rem;'>Add to Cart</a>
-      <a href='http://plugin.ijkstaging.com/checkout/?add-to-cart=PRODUCT_ID' target='_blank'
-         style='background:#059669; color:#fff; padding:10px 20px; border-radius:6px; text-decoration:none; font-size:1rem;'>Buy Now</a>
-    </div>
-  </li>
-</ul>
-
-IMPORTANT: Always show multiple products. Replace PRODUCT_ID, PRODUCT_TITLE, PRODUCT_PRICE, and PRODUCT_SLUG with actual values from the available products.`;
-
-      // Get AI response (optimize time by reducing tokens and request size)
+      // Get response from OpenAI
       const completion = await services.openai.chat.completions.create({
         model: "gpt-3.5-turbo",
-        messages: [{ role: "user", content: prompt }],
+        messages,
         temperature: 0.7,
-        max_tokens: 800 // Reduce the token limit to improve response time
+        max_tokens: 500
       });
 
-      const reply = completion.choices[0]?.message?.content ||
-        "I couldn't generate a response. Please try again.";
+      const aiReply = completion.choices[0]?.message?.content || "I couldn't generate a response.";
+      const fullReply = `${aiReply}${productCardsHTML}`;
 
       return NextResponse.json({
-        reply,
-        products: productsWithImages,
-        history: [...updatedHistory, { role: 'user', content: query }, { role: 'assistant', content: reply }]
+        reply: fullReply,
+        products: filteredProducts,
+        history: [
+          ...updatedHistory, 
+          { 
+            role: 'user', 
+            content: query,
+            metadata: { keyword }
+          },
+          { 
+            role: 'assistant', 
+            content: fullReply,
+            metadata: { 
+              products: filteredProducts,
+              count: desiredCount,
+              keyword
+            }
+          }
+        ]
       });
 
     } catch (dbError) {
       console.error("Database error:", dbError);
-      return NextResponse.json(
-        {
-          reply: "Sorry, we're having trouble accessing our product information.",
-          error: "Database operation failed",
-          debug: process.env.NODE_ENV === 'development' ? dbError : undefined
-        },
-        { status: 500 }
-      );
+      return NextResponse.json({
+        reply: "Sorry, we're having trouble accessing our product information.",
+        error: "Database operation failed",
+        debug: process.env.NODE_ENV === 'development' ? dbError : undefined
+      }, { status: 500 });
     } finally {
       if (connection) connection.release();
     }
 
   } catch (error) {
     console.error("API processing error:", error);
-    return NextResponse.json(
-      {
-        reply: "Sorry, I'm having trouble processing your request.",
-        error: error instanceof Error ? error.message : "Unknown error",
-        debug: process.env.NODE_ENV === 'development' ? error : undefined,
-        processingTime: `${Date.now() - startTime}ms`
-      },
-      { status: 500 }
-    );
+    return NextResponse.json({
+      reply: "Sorry, I'm having trouble processing your request.",
+      error: error instanceof Error ? error.message : "Unknown error",
+      debug: process.env.NODE_ENV === 'development' ? error : undefined,
+      processingTime: `${Date.now() - startTime}ms`
+    }, { status: 500 });
   }
 }
