@@ -126,9 +126,9 @@ const selectProducts = (
   // First filter by keyword if provided
   let filteredProducts = keyword
     ? allProducts.filter(p =>
-        (p.title.toLowerCase().includes(keyword) ||
-         p.description.toLowerCase().includes(keyword)) &&
-        !previouslyShownIds.includes(p.id))
+      (p.title.toLowerCase().includes(keyword) ||
+        p.description.toLowerCase().includes(keyword)) &&
+      !previouslyShownIds.includes(p.id))
     : allProducts.filter(p => !previouslyShownIds.includes(p.id));
 
   // If no keyword matches or not enough products, fall back to all available products
@@ -213,7 +213,7 @@ const generateProductCards = (products: Product[]): string => {
 
 const generateSystemPrompt = (context: ChatMessage[], products: Product[]): string => {
   const lastMessages = context.slice(-3).map(m => `${m.role}: ${m.content}`).join('\n');
-  
+
   return `You are a helpful shopping assistant for a store. Current conversation context:
 ${lastMessages}
 
@@ -222,7 +222,7 @@ ${products.map(p => `- ${p.title} ($${p.price})`).join('\n')}
 
 Guidelines:
 1. Be conversational and friendly
-2. Don't recommend products until user asks
+2. Dont recommend products until user asks  
 3. Only recommend products from the available list
 4. If user asks about a specific product, provide details
 5. If user wants to view/add/buy a product, confirm the action
@@ -252,11 +252,11 @@ export async function POST(req: NextRequest) {
 
     // Initialize conversation if empty
     const updatedHistory: ChatMessage[] = history.length === 0
-      ? [{ 
-          role: 'assistant', 
-          content: "Hello! I'm your furniture shopping assistant. How can I help you today?", 
-          metadata: {} 
-        }]
+      ? [{
+        role: 'assistant',
+        content: "Hello! I'm your furniture shopping assistant. How can I help you today?",
+        metadata: {}
+      }]
       : history as ChatMessage[];
 
     try {
@@ -323,19 +323,19 @@ export async function POST(req: NextRequest) {
       // Determine what products to show based on conversation
       const desiredCount = extractProductCount(query);
       const keyword = extractKeyword(query);
-      
+
       // Check if we have a previous product selection in the conversation
       const previousSelection = updatedHistory
         .slice()
         .reverse()
         .find(msg => msg.metadata?.products);
-      
+
       const previouslyShownIds = getPreviouslyShownIds(updatedHistory);
       // Filter products based on keyword and exclude previously shown
       let filteredProducts = keyword
         ? allProductsWithImages.filter(p =>
           (p.title.toLowerCase().includes(keyword) ||
-          p.description.toLowerCase().includes(keyword)) &&
+            p.description.toLowerCase().includes(keyword)) &&
           !previouslyShownIds.includes(p.id)
         ) : allProductsWithImages.filter(p => !previouslyShownIds.includes(p.id));
 
@@ -370,18 +370,21 @@ export async function POST(req: NextRequest) {
 
         return NextResponse.json({
           reply: actionMessage,
-          redirect: redirectUrl,
+          action: {
+            type: 'redirect',
+            url: redirectUrl
+          },
           history: [
-            ...updatedHistory, 
-            { 
-              role: 'user', 
+            ...updatedHistory,
+            {
+              role: 'user',
               content: query,
               metadata: { productId: product.id }
             },
-            { 
-              role: 'assistant', 
+            {
+              role: 'assistant',
               content: actionMessage,
-              metadata: { 
+              metadata: {
                 action,
                 productId: product.id
               }
@@ -389,6 +392,7 @@ export async function POST(req: NextRequest) {
           ]
         });
       }
+
 
       // Generate product cards HTML
       const productCardsHTML = generateProductCards(filteredProducts);
@@ -420,16 +424,16 @@ export async function POST(req: NextRequest) {
         reply: fullReply,
         products: filteredProducts,
         history: [
-          ...updatedHistory, 
-          { 
-            role: 'user', 
+          ...updatedHistory,
+          {
+            role: 'user',
             content: query,
             metadata: { keyword }
           },
-          { 
-            role: 'assistant', 
+          {
+            role: 'assistant',
             content: fullReply,
-            metadata: { 
+            metadata: {
               products: filteredProducts,
               count: desiredCount,
               keyword
