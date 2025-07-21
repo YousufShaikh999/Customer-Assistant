@@ -222,11 +222,12 @@ ${products.map(p => `- ${p.title} ($${p.price})`).join('\n')}
 
 Guidelines:
 1. Be conversational and friendly
-2. Only recommend products from the available list
-3. If user asks about a specific product, provide details
-4. If user wants to view/add/buy a product, confirm the action
-5. Keep responses concise but helpful
-6. Remember previous messages in the conversation`;
+2. Don't recommend products until user asks
+3. Only recommend products from the available list
+4. If user asks about a specific product, provide details
+5. If user wants to view/add/buy a product, confirm the action
+6. Keep responses concise but helpful
+7. Remember previous messages in the conversation`;
 };
 
 export async function POST(req: NextRequest) {
