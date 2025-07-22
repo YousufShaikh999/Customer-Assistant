@@ -12,18 +12,29 @@ interface Message {
   timestamp: Date;
 }
 
+interface Product {
+  id: string;
+  title: string;
+  price: number;
+  image_url?: string;
+}
+
 const CustomerAssistant = () => {
   const [isOpen, setIsOpen] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [pendingAction, setPendingAction] = useState<{
+    type: 'buy' | 'addToCart';
+    productId: string;
+    productTitle: string;
+  } | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
 
   const toggleChat = () => {
     setIsOpen(!isOpen);
-    // Persist chat open state
     if (!isOpen) {
       sessionStorage.setItem('chatOpen', 'true');
     } else {
@@ -35,30 +46,75 @@ const CustomerAssistant = () => {
     setMessages(prev => [...prev, message]);
   };
 
-  // Add global addToCartAndCheckout function
   useEffect(() => {
-    (window as any).addToCartAndCheckout = (productId: number) => {
-      console.log('Buy Now clicked for product ID:', productId);
-      // Direct redirect to add-to-cart URL - this bypasses CORS issues
-      window.location.href = `http://plugin.ijkstaging.com/shop/?add-to-cart=${productId}`;
+    // Handle click events for all interactive elements in messages
+    const handleMessageClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+
+      // Handle buy now buttons
+      const buyButton = target.closest('.assistant-buy-now-btn');
+      if (buyButton) {
+        e.preventDefault();
+        const productId = buyButton.getAttribute('data-product-id');
+        const productTitle = buyButton.getAttribute('data-product-title');
+        if (productId && productTitle) {
+          setPendingAction({
+            type: 'buy',
+            productId,
+            productTitle
+          });
+          addMessage({
+            id: Date.now().toString(),
+            content: `Are you sure you want to buy ${productTitle}? (Type "yes" to confirm)`,
+            isUser: false,
+            timestamp: new Date()
+          });
+        }
+        return;
+      }
+
+      // Handle add to cart buttons
+      const addToCartButton = target.closest('.assistant-add-to-cart-btn');
+      if (addToCartButton) {
+        e.preventDefault();
+        const productId = addToCartButton.getAttribute('data-product-id');
+        const productTitle = addToCartButton.getAttribute('data-product-title');
+        if (productId && productTitle) {
+          setPendingAction({
+            type: 'addToCart',
+            productId,
+            productTitle
+          });
+          addMessage({
+            id: Date.now().toString(),
+            content: `Are you sure you want to add ${productTitle} to your cart? (Type "yes" to confirm)`,
+            isUser: false,
+            timestamp: new Date()
+          });
+        }
+        return;
+      }
+
+      // Handle product links (let them work normally)
+      const productLink = target.closest('.assistant-product-link');
+      if (productLink) {
+        // Links will work normally
+        return;
+      }
     };
-    
-    console.log('addToCartAndCheckout function attached to window');
-    
+
+    document.addEventListener('click', handleMessageClick);
     return () => {
-      delete (window as any).addToCartAndCheckout;
+      document.removeEventListener('click', handleMessageClick);
     };
   }, []);
 
-  // Add starting message when the chat is opened
   useEffect(() => {
-    // Check if the chat is open and there are no messages yet
     if (isOpen && messages.length === 0) {
-      // Only add if there isn't already a welcome message
-      const hasWelcomeMessage = messages.some(msg => 
+      const hasWelcomeMessage = messages.some(msg =>
         msg.content.includes("Hello! How can I assist you today?") && !msg.isUser
       );
-      
+
       if (!hasWelcomeMessage) {
         addMessage({
           id: Date.now().toString(),
@@ -70,43 +126,68 @@ const CustomerAssistant = () => {
     }
   }, [isOpen, messages]);
 
-  // Scroll to bottom of chat
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  // Restore chat state from sessionStorage on component mount
-  useEffect(() => {
-    const savedMessages = sessionStorage.getItem('chatMessages');
-    const chatOpen = sessionStorage.getItem('chatOpen');
-    
-    if (savedMessages) {
-      const parsedMessages = JSON.parse(savedMessages);
-      // Convert string timestamps back to Date objects
-      const messagesWithDates = parsedMessages.map((msg: any) => ({
-        ...msg,
-        timestamp: new Date(msg.timestamp)
-      }));
-      setMessages(messagesWithDates);
-      sessionStorage.removeItem('chatMessages');
-    }
-    
-    if (chatOpen) {
-      setIsOpen(true);
-    }
-  }, []);
+  const handleAddToCart = (product: Product) => {
+    // Convert price to number if it isn't already
+    const price = typeof product.price === 'string'
+      ? parseFloat(product.price)
+      : product.price;
 
-  const renderMessageContent = (content: string) => {
-    const sanitized = DOMPurify.sanitize(content, {
-      ADD_TAGS: ['img', 'button'],
-      ADD_ATTR: ['style', 'src', 'alt', 'onclick']
-    });
-    return <div dangerouslySetInnerHTML={{ __html: sanitized }} />;
+    const cart = JSON.parse(localStorage.getItem('cart') || '[]');
+    if (!cart.some((item: any) => item.id === product.id)) {
+      cart.push({
+        ...product,
+        price: price // Use the converted price
+      });
+      localStorage.setItem('cart', JSON.stringify(cart));
+      addMessage({
+        id: Date.now().toString(),
+        content: `<span style="color:green;">Added <b>${product.title}</b> to your cart!</span>`,
+        isUser: false,
+        timestamp: new Date()
+      });
+    } else {
+      addMessage({
+        id: Date.now().toString(),
+        content: `<span style="color:orange;">${product.title} is already in your cart.</span>`,
+        isUser: false,
+        timestamp: new Date()
+      });
+    }
+  };
+
+  const handleBuyNow = (productId: string) => {
+    // Store messages before redirecting
+    sessionStorage.setItem('chatMessages', JSON.stringify(messages));
+    sessionStorage.setItem('chatOpen', 'true');
+
+    // Redirect to checkout
+    window.location.href = `/checkout/?add-to-cart=${productId}`;
   };
 
   const handleSubmit = async () => {
     if (!input.trim()) {
       setError("Please enter a message");
+      return;
+    }
+
+    // Handle confirmation for pending actions
+    if (pendingAction && input.toLowerCase().trim() === 'yes') {
+      if (pendingAction.type === 'buy') {
+        handleBuyNow(pendingAction.productId);
+      } else if (pendingAction.type === 'addToCart') {
+        handleAddToCart({
+          id: pendingAction.productId,
+          title: pendingAction.productTitle,
+          price: 0, // Price will be updated from the actual product
+          image_url: ''
+        });
+      }
+      setPendingAction(null);
+      setInput("");
       return;
     }
 
@@ -121,6 +202,7 @@ const CustomerAssistant = () => {
     setInput("");
     setLoading(true);
     setError("");
+    setPendingAction(null);
 
     try {
       const res = await fetch("/api/customer-assistant", {
@@ -135,33 +217,18 @@ const CustomerAssistant = () => {
         }),
       });
 
-      if (!res.ok) throw new Error("Network response was not ok");
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(
+          errorData.error ||
+          errorData.message ||
+          `Request failed with status ${res.status}`
+        );
+      }
 
       const data = await res.json();
 
-      // Handle addToCart from backend (confirmation flow)
-      if (data.addToCart) {
-        const cart = JSON.parse(localStorage.getItem('cart') || '[]');
-        if (!cart.some((item: any) => item.id === data.addToCart.id)) {
-          cart.push(data.addToCart);
-          localStorage.setItem('cart', JSON.stringify(cart));
-          addMessage({
-            id: Date.now().toString(),
-            content: `<span style="color:green;">Added <b>${data.addToCart.title}</b> to your cart!</span>`,
-            isUser: false,
-            timestamp: new Date()
-          });
-        } else {
-          addMessage({
-            id: Date.now().toString(),
-            content: `<span style="color:orange;">${data.addToCart.title} is already in your cart.</span>`,
-            isUser: false,
-            timestamp: new Date()
-          });
-        }
-        return;
-      }
-
+      // Handle different response types
       if (data.redirect) {
         const aiMessage = {
           id: Date.now().toString(),
@@ -171,7 +238,6 @@ const CustomerAssistant = () => {
         };
         addMessage(aiMessage);
 
-        // Store messages in sessionStorage before redirecting
         sessionStorage.setItem('chatMessages', JSON.stringify([
           ...messages,
           userMessage,
@@ -179,12 +245,15 @@ const CustomerAssistant = () => {
         ]));
         sessionStorage.setItem('chatOpen', 'true');
 
-        setTimeout(() => {
+        if (data.redirect.startsWith('/')) {
+          router.push(data.redirect);
+        } else {
           window.location.href = data.redirect;
-        }, 1500);
+        }
         return;
       }
 
+      // Handle product display
       const aiMessage = {
         id: Date.now().toString(),
         content: data.reply,
@@ -194,38 +263,31 @@ const CustomerAssistant = () => {
       addMessage(aiMessage);
 
     } catch (err) {
-      setError("Failed to get response. Please try again.");
-      console.error(err);
+      const errorMessage = err instanceof Error ? err.message : "Failed to get response";
+      setError(errorMessage);
+
+      // Add error message to chat
+      addMessage({
+        id: Date.now().toString(),
+        content: `<span style="color:red;">Sorry, I encountered an error: ${errorMessage}</span>`,
+        isUser: false,
+        timestamp: new Date()
+      });
+
+      console.error("API Error:", err);
     } finally {
       setLoading(false);
     }
   };
 
-  // Intercept clicks on product card links
-  useEffect(() => {
-    const handleLinkClick = (e: MouseEvent) => {
-      const target = e.target as HTMLElement;
-      if (target.tagName === 'A' && target.closest('.assistant-product-link')) {
-        e.preventDefault();
-        const href = (target as HTMLAnchorElement).getAttribute('href');
-        if (href) {
-          // Persist chat state
-          sessionStorage.setItem('chatMessages', JSON.stringify(messages));
-          sessionStorage.setItem('chatOpen', 'true');
-          router.push(href);
-        }
-      }
-    };
-    const chatArea = document.getElementById('assistant-chat-area');
-    if (chatArea) {
-      chatArea.addEventListener('click', handleLinkClick);
-    }
-    return () => {
-      if (chatArea) {
-        chatArea.removeEventListener('click', handleLinkClick);
-      }
-    };
-  }, [messages, router]);
+  const renderMessageContent = (content: string) => {
+    const sanitized = DOMPurify.sanitize(content, {
+      ADD_TAGS: ['img', 'button', 'a'],
+      ADD_ATTR: ['style', 'src', 'alt', 'href', 'class', 'data-product-id', 'data-product-title', 'target']
+    });
+
+    return <div dangerouslySetInnerHTML={{ __html: sanitized }} />;
+  };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -250,9 +312,9 @@ const CustomerAssistant = () => {
 
   return (
     <div className="fixed bottom-4 right-4 z-50 w-full max-w-[calc(100%-2rem)] sm:max-w-md md:max-w-lg lg:max-w-xl xl:max-w-2xl">
-      <div className="w-full h-[calc(100vh-8rem)] sm:h-[600px] bg-gradient-to-t from-white via-blue-50 to-blue-100 shadow-xl rounded-2xl overflow-hidden border border-gray-300 flex flex-col transition-all duration-300 ease-in-out transform hover:scale-105">
+      <div className="w-full h-[calc(100vh-8rem)] sm:h-[600px] bg-gradient-to-t from-white via-blue-50 to-blue-100 shadow-xl rounded-2xl overflow-hidden border border-gray-300 flex flex-col">
         {/* Chat header */}
-        <div className="bg-blue-600 text-white p-4 flex items-center justify-between rounded-t-xl transition-all duration-300 ease-in-out hover:bg-blue-700">
+        <div className="bg-blue-600 text-white p-4 flex items-center justify-between rounded-t-xl">
           <div className="flex items-center gap-2 sm:gap-3">
             <Sparkles className="text-yellow-300 w-6 h-6 sm:w-7 sm:h-7" />
             <h2 className="text-lg sm:text-xl font-semibold">Shopping Assistant</h2>
@@ -267,22 +329,22 @@ const CustomerAssistant = () => {
         </div>
 
         {/* Messages area */}
-        <div id="assistant-chat-area" className="flex-1 overflow-y-auto p-4 space-y-4">
+        <div
+          id="assistant-chat-area"
+          className="flex-1 overflow-y-auto p-4 space-y-4"
+        >
           {messages.map((message) => (
             <div
               key={message.id}
               className={`flex ${message.isUser ? 'justify-end' : 'justify-start'}`}
             >
               <div
-                className={`max-w-[85%] rounded-xl p-3 sm:p-4 text-sm sm:text-base transition-all duration-300 ease-in-out ${message.isUser
+                className={`max-w-[85%] rounded-xl p-3 sm:p-4 text-sm sm:text-base ${message.isUser
                   ? 'bg-blue-600 text-white rounded-br-none shadow-lg'
-                  : 'bg-gray-100 text-gray-800 rounded-bl-none shadow-md'}`}
+                  : 'bg-gray-100 text-gray-800 rounded-bl-none shadow-md'
+                  }`}
               >
-                {!message.isUser ? (
-                  renderMessageContent(message.content.replace(/\u003ca /g, '\u003ca class="assistant-product-link" '))
-                ) : (
-                  <p>{message.content}</p>
-                )}
+                {renderMessageContent(message.content)}
                 <p className="text-xs opacity-70 mt-1 sm:mt-2">
                   {message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                 </p>
@@ -315,8 +377,12 @@ const CustomerAssistant = () => {
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="Type your message..."
-              className="flex-1 px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm sm:text-base transition-all duration-300"
+              placeholder={
+                pendingAction
+                  ? "Type 'yes' to confirm or anything else to cancel"
+                  : "Type your message..."
+              }
+              className="flex-1 px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm sm:text-base"
               disabled={loading}
             />
             <button
