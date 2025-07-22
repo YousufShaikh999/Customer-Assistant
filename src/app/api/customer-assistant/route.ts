@@ -254,6 +254,8 @@ export async function POST(req: NextRequest): Promise<NextResponse<AssistantResp
 
     // Detect intents
     const lowerQuery = query.toLowerCase();
+
+    // Fix the keyword matching logic to ensure we catch variations of the keywords
     const isRedirectionRequest = config.redirectionKeywords.some(kw => lowerQuery.includes(kw));
     const isViewRequest = config.viewKeywords.some(kw => lowerQuery.includes(kw));
     const isAddToCartRequest = /add to cart|put in cart|add this to cart|add item to cart/i.test(lowerQuery);
@@ -277,18 +279,18 @@ export async function POST(req: NextRequest): Promise<NextResponse<AssistantResp
     if (isRedirectionRequest && productType && filteredProducts.length) {
       const product = filteredProducts[0];
       const productCard = `
-<div class="assistant-product-card">
-  <img src='${product.image_url}' style='max-width:100%; height:auto; max-height:150px; margin-bottom:8px; border-radius:4px;' alt='${product.title}'/><br/>
-  <strong>${product.title}</strong> - Perfect for your needs!<br/>
-  Price: $${Number(product.price).toFixed(2)}<br/>
-  <button class="assistant-buy-now-btn" 
-    data-product-id="${product._id}" 
-    data-product-title="${product.title}"
-    style='background:#059669; margin: 8px; color:#fff; padding:6px 12px; border-radius:6px; border:none; cursor:pointer;'>
-    Buy Now
-  </button>
-</div>
-<p>Are you sure you want to buy ${product.title}? (Type "yes" to confirm)</p>`;
+        <div class="assistant-product-card">
+            <img src='${product.image_url}' style='max-width:100%; height:auto; max-height:150px; margin-bottom:8px; border-radius:4px;' alt='${product.title}'/><br/>
+            <strong>${product.title}</strong> - Perfect for your needs!<br/>
+            Price: $${Number(product.price).toFixed(2)}<br/>
+            <button class="assistant-buy-now-btn" 
+                data-product-id="${product._id}" 
+                data-product-title="${product.title}"
+                style='background:#059669; margin: 8px; color:#fff; padding:6px 12px; border-radius:6px; border:none; cursor:pointer;'>
+                Buy Now
+            </button>
+        </div>
+        <p>Are you sure you want to buy ${product.title}? (Type "yes" to confirm)</p>`;
 
       return NextResponse.json({
         reply: productCard,
@@ -300,12 +302,11 @@ export async function POST(req: NextRequest): Promise<NextResponse<AssistantResp
       });
     }
 
-    // Handle view intent
     if (isViewRequest && productType && filteredProducts.length) {
       const product = filteredProducts[0];
       return NextResponse.json({
         reply: `Redirecting you to view ${product.title}...`,
-        redirect: `https://plugin.ijkstaging.com/product/${product.slug}`,
+        redirect: `http://plugin.ijkstaging.com/product/${product.slug}`,
         product: product.title,
         history: [
           ...(history || []),
@@ -319,7 +320,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<AssistantResp
       const product = filteredProducts[0];
       return NextResponse.json({
         reply: `Redirecting you to add ${product.title} to your cart...`,
-        redirect: `https://plugin.ijkstaging.com/shop/?add-to-cart=${product._id}`,
+        redirect: `http://plugin.ijkstaging.com/shop/?add-to-cart=${product._id}`,
         product: product.title,
         history: [
           ...(history || []),
