@@ -305,7 +305,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<AssistantResp
       const product = filteredProducts[0];
       return NextResponse.json({
         reply: `Redirecting you to view ${product.title}...`,
-        redirect: `https://plugin.ijkstaging.com/product/${product.slug}`,
+        redirect: `http://plugin.ijkstaging.com/product/${product.slug}`,
         product: product.title,
         history: [
           ...(history || []),
@@ -319,7 +319,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<AssistantResp
       const product = filteredProducts[0];
       return NextResponse.json({
         reply: `Redirecting you to add ${product.title} to your cart...`,
-        redirect: `https://plugin.ijkstaging.com/shop/?add-to-cart=${product._id}`,
+        redirect: `http://plugin.ijkstaging.com/shop/?add-to-cart=${product._id}`,
         product: product.title,
         history: [
           ...(history || []),
