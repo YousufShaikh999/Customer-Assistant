@@ -305,7 +305,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<AssistantResp
       const product = filteredProducts[0];
       return NextResponse.json({
         reply: `Redirecting you to view ${product.title}...`,
-        redirect: `http://plugin.ijkstaging.com/product/${product.slug}`,
+        redirect: `https://plugin.ijkstaging.com/product/${product.slug}`,
         product: product.title,
         history: [
           ...(history || []),
@@ -319,7 +319,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<AssistantResp
       const product = filteredProducts[0];
       return NextResponse.json({
         reply: `Redirecting you to add ${product.title} to your cart...`,
-        redirect: `http://plugin.ijkstaging.com/shop/?add-to-cart=${product._id}`,
+        redirect: `https://plugin.ijkstaging.com/shop/?add-to-cart=${product._id}`,
         product: product.title,
         history: [
           ...(history || []),
@@ -368,9 +368,9 @@ ${productList}
       <img src='IMAGE_URL' loading="lazy" style='max-width:100%; height:auto; max-height:150px; margin-bottom:8px; border-radius:4px;' alt='PRODUCT_TITLE'/><br/>
       <strong>PRODUCT_TITLE</strong> - BRIEF_DESCRIPTION<br/>
       Price: $PRODUCT_PRICE<br/>
-      <a href='${config.baseUrl}/product/PRODUCT_SLUG' style='background:#2563EB; margin: 8px; color:#fff; padding:6px 12px; border-radius:6px; text-decoration:none; margin-right:8px; display:inline-block;'>View Product</a>
-      <a href='${config.baseUrl}/checkout/?add-to-cart=PRODUCT_ID' style='background:#059669; margin: 8px; color:#fff; padding:6px 12px; border-radius:6px; text-decoration:none; display:inline-block;'>Buy Now</a>
-      <a href='${config.baseUrl}/shop/?add-to-cart=PRODUCT_ID' style='background:#916f10; margin: 8px; color:#fff; padding:6px 12px; border-radius:6px; text-decoration:none; display:inline-block;'>Add to Cart</a>
+      <a href='${config.baseUrl}/product/PRODUCT_SLUG' target='_blank' style='background:#2563EB; margin: 8px; color:#fff; padding:6px 12px; border-radius:6px; text-decoration:none; margin-right:8px; display:inline-block;'>View Product</a>
+      <a href='${config.baseUrl}/checkout/?add-to-cart=PRODUCT_ID' target='_blank' style='background:#059669; margin: 8px; color:#fff; padding:6px 12px; border-radius:6px; text-decoration:none; display:inline-block;'>Buy Now</a>
+      <a href='${config.baseUrl}/shop/?add-to-cart=PRODUCT_ID' target='_blank' style='background:#916f10; margin: 8px; color:#fff; padding:6px 12px; border-radius:6px; text-decoration:none; display:inline-block;'>Add to Cart</a>
     </li>
   </ul>
 `;
