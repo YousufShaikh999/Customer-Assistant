@@ -363,7 +363,7 @@ ${productList}
     <li style="background: none; padding: 20px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); transition: transform 0.2s ease, box-shadow 0.2s ease;">
         <div style="position: relative; margin-bottom: 16px;">
             <img src='IMAGE_URL' loading="lazy" style='width: 100%; height: 200px; object-fit: contain; border-radius: 8px; margin-bottom: 8px; background: #f8fafc;' alt='PRODUCT_TITLE'/>
-            <div style="position: absolute; top: 12px; right: 12px; background: #2563EB; color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: 600;">$PRODUCT_PRICE</div>
+            <div style="position: absolute; top: 12px; right: 12px; background: #2563EB; color: white; padding: 4px 8px; border-radius: 4px; font-size: 18px; font-weight: 600;">$PRODUCT_PRICE</div>
         </div>
         
         <div style="margin-bottom: 16px;">
