@@ -318,10 +318,15 @@ const CustomerAssistant = () => {
           ))}
           {loading && (
             <div className="flex justify-start">
-              <div className="bg-gray-100 text-gray-800 rounded-xl rounded-bl-none p-2 sm:p-3 max-w-[85%]">
-                <div className="flex items-center gap-2 sm:gap-3">
-                  <RotateCw className="animate-spin w-5 h-5 sm:w-[22px] sm:h-[22px]" />
-                  <span className="text-sm sm:text-base">Thinking...</span>
+              <div className="bg-gray-100 text-gray-800 rounded-xl rounded-bl-none p-3 sm:p-4 max-w-[85%]">
+                <div className="flex items-center gap-3 sm:gap-4">
+                  {/* Bubble loading animation */}
+                  <div className="flex space-x-2">
+                    <div className="w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-full bg-blue-500 animate-[bounce_1s_infinite_ease-in-out]" />
+                    <div className="w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-full bg-blue-600 animate-[bounce_1s_infinite_ease-in-out_0.2s]" />
+                    <div className="w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-full bg-blue-700 animate-[bounce_1s_infinite_ease-in-out_0.4s]" />
+                  </div>
+                  <span className="text-sm sm:text-base font-medium">Thinking...</span>
                 </div>
               </div>
             </div>
