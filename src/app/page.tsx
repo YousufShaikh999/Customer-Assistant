@@ -164,9 +164,9 @@ const CustomerAssistant = () => {
     // Handle confirmation for pending actions
     if (pendingAction && input.toLowerCase().trim() === "yes") {
       if (pendingAction.type === "buy") {
-        handleBuyNow(pendingAction.productId);
+        window.open(`https://plugin.ijkstaging.com/checkout/?add-to-cart=${pendingAction.productId}`, '_blank');
       } else if (pendingAction.type === "addToCart") {
-        handleAddToCart(pendingAction.productId);
+        window.open(`https://plugin.ijkstaging.com/shop/?add-to-cart=${pendingAction.productId}`, '_blank');
       }
       setPendingAction(null);
       setInput("");
@@ -199,33 +199,23 @@ const CustomerAssistant = () => {
         }),
       });
 
-      if (!res.ok) {
-        const errorData = await res.json().catch(() => ({}));
-        throw new Error(
-          errorData.error ||
-          errorData.message ||
-          `Request failed with status ${res.status}`
-        );
-      }
+      if (!res.ok) throw new Error("Request failed");
 
       const data = await res.json();
 
-      // Handle different response types
       if (data.redirect) {
+        window.open(data.redirect, '_blank');
         const aiMessage = {
           id: Date.now().toString(),
-          content: data.reply,
+          content: `Opening <strong>${data.product || "the page"}</strong> in a new tab...`,
           isUser: false,
           timestamp: new Date(),
         };
         addMessage(aiMessage);
 
-        // Store messages before redirecting
         sessionStorage.setItem("chatMessages", JSON.stringify([...messages, userMessage, aiMessage]));
         sessionStorage.setItem("chatOpen", "true");
 
-        // Use window.location for same-tab navigation or window.open for new tab
-        window.location.href = data.redirect;
         return;
       }
 
