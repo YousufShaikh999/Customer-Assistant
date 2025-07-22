@@ -130,34 +130,17 @@ const CustomerAssistant = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  const handleAddToCart = (product: Product) => {
-    // Convert price to number if it isn't already
-    const price = typeof product.price === 'string'
-      ? parseFloat(product.price)
-      : product.price;
+  // Replace the handleAddToCart function with:
+  const handleAddToCart = (productId: string) => {
+    // Store messages before redirecting
+    sessionStorage.setItem('chatMessages', JSON.stringify(messages));
+    sessionStorage.setItem('chatOpen', 'true');
 
-    const cart = JSON.parse(localStorage.getItem('cart') || '[]');
-    if (!cart.some((item: any) => item.id === product.id)) {
-      cart.push({
-        ...product,
-        price: price // Use the converted price
-      });
-      localStorage.setItem('cart', JSON.stringify(cart));
-      addMessage({
-        id: Date.now().toString(),
-        content: `<span style="color:green;">Added <b>${product.title}</b> to your cart!</span>`,
-        isUser: false,
-        timestamp: new Date()
-      });
-    } else {
-      addMessage({
-        id: Date.now().toString(),
-        content: `<span style="color:orange;">${product.title} is already in your cart.</span>`,
-        isUser: false,
-        timestamp: new Date()
-      });
-    }
+    // Redirect to add-to-cart URL
+    window.location.href = `https://plugin.ijkstaging.com/shop/?add-to-cart=${productId}`;
   };
+
+  // (Removed duplicate click handler code that referenced 'target')
 
   const handleBuyNow = (productId: string) => {
     // Store messages before redirecting
@@ -179,12 +162,7 @@ const CustomerAssistant = () => {
       if (pendingAction.type === 'buy') {
         handleBuyNow(pendingAction.productId);
       } else if (pendingAction.type === 'addToCart') {
-        handleAddToCart({
-          id: pendingAction.productId,
-          title: pendingAction.productTitle,
-          price: 0, // Price will be updated from the actual product
-          image_url: ''
-        });
+        handleAddToCart(pendingAction.productId);
       }
       setPendingAction(null);
       setInput("");
