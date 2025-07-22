@@ -354,20 +354,39 @@ ${conversationContext}
 ${productList}  
 
 **Response Guidelines:**
+- If user greets you with "Hi" or "Hello", respond warmly and ask how you can help.
 - Be conversational: "Oh, I found..." or "Hmm, let me check..."
 - If no matching products: "Hmm, I checked but we don't have XYZ right now..."
 - When showing products:
   1. Use EXACTLY this HTML format:
-  <ul>
-    <li style='background:#f9f9f9; padding:16px; border:1px solid #ddd; border-radius:8px; margin-bottom:12px'>
-      <img src='IMAGE_URL' loading="lazy" style='max-width:100%; height:auto; max-height:150px; margin-bottom:8px; border-radius:4px;' alt='PRODUCT_TITLE'/><br/>
-      <strong>PRODUCT_TITLE</strong> - BRIEF_DESCRIPTION<br/>
-      Price: $PRODUCT_PRICE<br/>
-      <a href='${config.baseUrl}/product/PRODUCT_SLUG' target='_blank' style='background:#2563EB; margin: 8px; color:#fff; padding:6px 12px; border-radius:6px; text-decoration:none; margin-right:8px; display:inline-block;'>View Product</a>
-      <a href='${config.baseUrl}/checkout/?add-to-cart=PRODUCT_ID' target='_blank' style='background:#059669; margin: 8px; color:#fff; padding:6px 12px; border-radius:6px; text-decoration:none; display:inline-block;'>Buy Now</a>
-      <a href='${config.baseUrl}/shop/?add-to-cart=PRODUCT_ID' target='_blank' style='background:#916f10; margin: 8px; color:#fff; padding:6px 12px; border-radius:6px; text-decoration:none; display:inline-block;'>Add to Cart</a>
+  <ul style="list-style: none; padding: 0; margin: 10px; display: grid; gap: 20px;">
+    <li style="background: none; padding: 20px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); transition: transform 0.2s ease, box-shadow 0.2s ease;">
+        <div style="position: relative; margin-bottom: 16px;">
+            <img src='IMAGE_URL' loading="lazy" style='width: 100%; height: 200px; object-fit: contain; border-radius: 8px; margin-bottom: 8px; background: #f8fafc;' alt='PRODUCT_TITLE'/>
+            <div style="position: absolute; top: 12px; right: 12px; background: #2563EB; color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: 600;">$PRODUCT_PRICE</div>
+        </div>
+        
+        <div style="margin-bottom: 16px;">
+            <h3 style="margin: 0 0 8px 0; font-size: 18px; font-weight: 600; color: #1e293b;">PRODUCT_TITLE</h3>
+            <p style="margin: 0; color: #64748b; font-size: 14px; line-height: 1.4;">BRIEF_DESCRIPTION</p>
+        </div>
+        
+        <div style="display: flex; gap: 12px; flex-wrap: wrap;">
+            <a href='${config.baseUrl}/product/PRODUCT_SLUG' 
+               style='background: none; color: #2563EB; padding: 8px 16px; border-radius: 6px; text-decoration: none; font-weight: 500; border: 1px solid #2563EB; transition: all 0.2s ease;'>
+               View Details
+            </a>
+            <a href='${config.baseUrl}/checkout/?add-to-cart=PRODUCT_ID' 
+               style='background: #2563EB; color: white; padding: 8px 16px; border-radius: 6px; text-decoration: none; font-weight: 500; transition: all 0.2s ease;'>
+               Buy Now
+            </a>
+            <a href='${config.baseUrl}/shop/?add-to-cart=PRODUCT_ID' 
+               style='background: #f8fafc; color: #334155; padding: 8px 16px; border-radius: 6px; text-decoration: none; font-weight: 500; transition: all 0.2s ease;'>
+               Add to Cart
+            </a>
+        </div>
     </li>
-  </ul>
+</ul>
 `;
 
     const res = await services.openai.chat.completions.create({
