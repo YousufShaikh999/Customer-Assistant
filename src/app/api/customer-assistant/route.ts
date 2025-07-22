@@ -315,30 +315,16 @@ export async function POST(req: NextRequest): Promise<NextResponse<AssistantResp
       });
     }
 
-    // Handle add to cart intent
     if (isAddToCartRequest && productType && filteredProducts.length) {
       const product = filteredProducts[0];
-      const productCard = `
-<ul>
-  <li style='background:#f9f9f9; padding:16px; border:1px solid #ddd; border-radius:8px; margin-bottom:12px'>
-    <img src='${product.image_url}' style='max-width:100%; height:auto; max-height:150px; margin-bottom:8px; border-radius:4px;' alt='${product.title}'/><br/>
-    <strong>${product.title}</strong><br/>
-    Price: $${product.price.toFixed(2)}<br/>
-    <button class="assistant-add-to-cart-btn"
-      data-product='{"id":"${product._id}","title":"${product.title}","price":${product.price},"image_url":"${product.image_url}"}'
-      style="background:#f59e42; color:#fff; padding:6px 12px; border-radius:6px; border:none; margin:8px; cursor:pointer;">
-      Add to Cart
-    </button>
-  </li>
-</ul>
-Are you sure you want to add ${product.title} to your cart?`;
-
       return NextResponse.json({
-        reply: productCard,
+        reply: `Redirecting you to add ${product.title} to your cart...`,
+        redirect: `https://plugin.ijkstaging.com/shop/?add-to-cart=${product._id}`,
+        product: product.title,
         history: [
           ...(history || []),
           { role: 'user', content: query },
-          { role: 'assistant', content: productCard }
+          { role: 'assistant', content: `Redirecting you to add ${product.title} to your cart...` }
         ]
       });
     }
@@ -384,11 +370,7 @@ ${productList}
       Price: $PRODUCT_PRICE<br/>
       <a href='${config.baseUrl}/product/PRODUCT_SLUG' style='background:#2563EB; margin: 8px; color:#fff; padding:6px 12px; border-radius:6px; text-decoration:none; margin-right:8px; display:inline-block;'>View Product</a>
       <a href='${config.baseUrl}/checkout/?add-to-cart=PRODUCT_ID' style='background:#059669; margin: 8px; color:#fff; padding:6px 12px; border-radius:6px; text-decoration:none; display:inline-block;'>Buy Now</a>
-      <button class="assistant-add-to-cart-btn"
-        data-product='{"id":"PRODUCT_ID","title":"PRODUCT_TITLE","price":PRODUCT_PRICE,"image_url":"IMAGE_URL"}'
-        style="background:#f59e42; color:#fff; padding:6px 12px; border-radius:6px; border:none; margin:8px; cursor:pointer;">
-        Add to Cart
-      </button>
+      <a href='${config.baseUrl}/shop/?add-to-cart=PRODUCT_ID' style='background:#916f10; margin: 8px; color:#fff; padding:6px 12px; border-radius:6px; text-decoration:none; display:inline-block;'>Add to Cart</a>
     </li>
   </ul>
 `;
