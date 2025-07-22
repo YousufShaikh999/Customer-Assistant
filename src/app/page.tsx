@@ -2,8 +2,8 @@
 
 import React, { useState, useEffect, useRef } from "react";
 import { Sparkles, Send, RotateCw, X, MessageCircle } from "lucide-react";
-import DOMPurify from 'dompurify';
-import { useRouter } from 'next/navigation';
+import DOMPurify from "dompurify";
+import { useRouter } from "next/navigation";
 
 interface Message {
   id: string;
@@ -26,7 +26,7 @@ const CustomerAssistant = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [pendingAction, setPendingAction] = useState<{
-    type: 'buy' | 'addToCart';
+    type: "buy" | "addToCart";
     productId: string;
     productTitle: string;
   } | null>(null);
@@ -36,14 +36,14 @@ const CustomerAssistant = () => {
   const toggleChat = () => {
     setIsOpen(!isOpen);
     if (!isOpen) {
-      sessionStorage.setItem('chatOpen', 'true');
+      sessionStorage.setItem("chatOpen", "true");
     } else {
-      sessionStorage.removeItem('chatOpen');
+      sessionStorage.removeItem("chatOpen");
     }
   };
 
   const addMessage = (message: Message) => {
-    setMessages(prev => [...prev, message]);
+    setMessages((prev) => [...prev, message]);
   };
 
   useEffect(() => {
@@ -52,67 +52,68 @@ const CustomerAssistant = () => {
       const target = e.target as HTMLElement;
 
       // Handle buy now buttons
-      const buyButton = target.closest('.assistant-buy-now-btn');
+      const buyButton = target.closest(".assistant-buy-now-btn");
       if (buyButton) {
         e.preventDefault();
-        const productId = buyButton.getAttribute('data-product-id');
-        const productTitle = buyButton.getAttribute('data-product-title');
+        const productId = buyButton.getAttribute("data-product-id");
+        const productTitle = buyButton.getAttribute("data-product-title");
         if (productId && productTitle) {
           setPendingAction({
-            type: 'buy',
+            type: "buy",
             productId,
-            productTitle
+            productTitle,
           });
           addMessage({
             id: Date.now().toString(),
             content: `Are you sure you want to buy ${productTitle}? (Type "yes" to confirm)`,
             isUser: false,
-            timestamp: new Date()
+            timestamp: new Date(),
           });
         }
         return;
       }
 
       // Handle add to cart buttons
-      const addToCartButton = target.closest('.assistant-add-to-cart-btn');
+      const addToCartButton = target.closest(".assistant-add-to-cart-btn");
       if (addToCartButton) {
         e.preventDefault();
-        const productId = addToCartButton.getAttribute('data-product-id');
-        const productTitle = addToCartButton.getAttribute('data-product-title');
+        const productId = addToCartButton.getAttribute("data-product-id");
+        const productTitle = addToCartButton.getAttribute("data-product-title");
         if (productId && productTitle) {
           setPendingAction({
-            type: 'addToCart',
+            type: "addToCart",
             productId,
-            productTitle
+            productTitle,
           });
           addMessage({
             id: Date.now().toString(),
             content: `Are you sure you want to add ${productTitle} to your cart? (Type "yes" to confirm)`,
             isUser: false,
-            timestamp: new Date()
+            timestamp: new Date(),
           });
         }
         return;
       }
 
       // Handle product links (let them work normally)
-      const productLink = target.closest('.assistant-product-link');
+      const productLink = target.closest(".assistant-product-link");
       if (productLink) {
         // Links will work normally
         return;
       }
     };
 
-    document.addEventListener('click', handleMessageClick);
+    document.addEventListener("click", handleMessageClick);
     return () => {
-      document.removeEventListener('click', handleMessageClick);
+      document.removeEventListener("click", handleMessageClick);
     };
   }, []);
 
   useEffect(() => {
     if (isOpen && messages.length === 0) {
-      const hasWelcomeMessage = messages.some(msg =>
-        msg.content.includes("Hello! How can I assist you today?") && !msg.isUser
+      const hasWelcomeMessage = messages.some(
+        (msg) =>
+          msg.content.includes("Hello! How can I assist you today?") && !msg.isUser
       );
 
       if (!hasWelcomeMessage) {
@@ -130,25 +131,27 @@ const CustomerAssistant = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  // Replace the handleAddToCart function with:
-  const handleAddToCart = (productId: string) => {
-    // Store messages before redirecting
-    sessionStorage.setItem('chatMessages', JSON.stringify(messages));
-    sessionStorage.setItem('chatOpen', 'true');
-
-    // Redirect to add-to-cart URL
-    window.location.href = `https://plugin.ijkstaging.com/shop/?add-to-cart=${productId}`;
+  const handleRedirect = (url: string) => {
+    // Send message to parent WordPress to handle the redirection
+    window.parent.postMessage({ type: "redirect", url: url }, "*");
   };
 
-  // (Removed duplicate click handler code that referenced 'target')
+  const handleAddToCart = (productId: string) => {
+    // Store messages before redirecting
+    sessionStorage.setItem("chatMessages", JSON.stringify(messages));
+    sessionStorage.setItem("chatOpen", "true");
+
+    // Redirect to add-to-cart URL
+    handleRedirect(`https://plugin.ijkstaging.com/shop/?add-to-cart=${productId}`);
+  };
 
   const handleBuyNow = (productId: string) => {
     // Store messages before redirecting
-    sessionStorage.setItem('chatMessages', JSON.stringify(messages));
-    sessionStorage.setItem('chatOpen', 'true');
+    sessionStorage.setItem("chatMessages", JSON.stringify(messages));
+    sessionStorage.setItem("chatOpen", "true");
 
     // Redirect to checkout
-    window.location.href = `/checkout/?add-to-cart=${productId}`;
+    handleRedirect(`/checkout/?add-to-cart=${productId}`);
   };
 
   const handleSubmit = async () => {
@@ -158,10 +161,10 @@ const CustomerAssistant = () => {
     }
 
     // Handle confirmation for pending actions
-    if (pendingAction && input.toLowerCase().trim() === 'yes') {
-      if (pendingAction.type === 'buy') {
+    if (pendingAction && input.toLowerCase().trim() === "yes") {
+      if (pendingAction.type === "buy") {
         handleBuyNow(pendingAction.productId);
-      } else if (pendingAction.type === 'addToCart') {
+      } else if (pendingAction.type === "addToCart") {
         handleAddToCart(pendingAction.productId);
       }
       setPendingAction(null);
@@ -173,7 +176,7 @@ const CustomerAssistant = () => {
       id: Date.now().toString(),
       content: input,
       isUser: true,
-      timestamp: new Date()
+      timestamp: new Date(),
     };
 
     addMessage(userMessage);
@@ -188,10 +191,10 @@ const CustomerAssistant = () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           query: input,
-          history: messages.filter(m => !m.isUser).map(m => ({
+          history: messages.filter((m) => !m.isUser).map((m) => ({
             role: "assistant",
-            content: m.content
-          }))
+            content: m.content,
+          })),
         }),
       });
 
@@ -199,8 +202,8 @@ const CustomerAssistant = () => {
         const errorData = await res.json().catch(() => ({}));
         throw new Error(
           errorData.error ||
-          errorData.message ||
-          `Request failed with status ${res.status}`
+            errorData.message ||
+            `Request failed with status ${res.status}`
         );
       }
 
@@ -212,21 +215,18 @@ const CustomerAssistant = () => {
           id: Date.now().toString(),
           content: data.reply,
           isUser: false,
-          timestamp: new Date()
+          timestamp: new Date(),
         };
         addMessage(aiMessage);
 
-        sessionStorage.setItem('chatMessages', JSON.stringify([
-          ...messages,
-          userMessage,
-          aiMessage
-        ]));
-        sessionStorage.setItem('chatOpen', 'true');
+        sessionStorage.setItem("chatMessages", JSON.stringify([...(messages || []), userMessage, aiMessage]));
+        sessionStorage.setItem("chatOpen", "true");
 
-        if (data.redirect.startsWith('/')) {
+        // Handle redirection
+        if (data.redirect.startsWith("/")) {
           router.push(data.redirect);
         } else {
-          window.location.href = data.redirect;
+          handleRedirect(data.redirect);
         }
         return;
       }
@@ -236,10 +236,9 @@ const CustomerAssistant = () => {
         id: Date.now().toString(),
         content: data.reply,
         isUser: false,
-        timestamp: new Date()
+        timestamp: new Date(),
       };
       addMessage(aiMessage);
-
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : "Failed to get response";
       setError(errorMessage);
@@ -249,7 +248,7 @@ const CustomerAssistant = () => {
         id: Date.now().toString(),
         content: `<span style="color:red;">Sorry, I encountered an error: ${errorMessage}</span>`,
         isUser: false,
-        timestamp: new Date()
+        timestamp: new Date(),
       });
 
       console.error("API Error:", err);
@@ -260,15 +259,15 @@ const CustomerAssistant = () => {
 
   const renderMessageContent = (content: string) => {
     const sanitized = DOMPurify.sanitize(content, {
-      ADD_TAGS: ['img', 'button', 'a'],
-      ADD_ATTR: ['style', 'src', 'alt', 'href', 'class', 'data-product-id', 'data-product-title', 'target']
+      ADD_TAGS: ["img", "button", "a"],
+      ADD_ATTR: ["style", "src", "alt", "href", "class", "data-product-id", "data-product-title", "target"],
     });
 
     return <div dangerouslySetInnerHTML={{ __html: sanitized }} />;
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       handleSubmit();
     }
@@ -314,17 +313,17 @@ const CustomerAssistant = () => {
           {messages.map((message) => (
             <div
               key={message.id}
-              className={`flex ${message.isUser ? 'justify-end' : 'justify-start'}`}
+              className={`flex ${message.isUser ? "justify-end" : "justify-start"}`}
             >
               <div
                 className={`max-w-[85%] rounded-xl p-3 sm:p-4 text-sm sm:text-base ${message.isUser
-                  ? 'bg-blue-600 text-white rounded-br-none shadow-lg'
-                  : 'bg-gray-100 text-gray-800 rounded-bl-none shadow-md'
+                  ? "bg-blue-600 text-white rounded-br-none shadow-lg"
+                  : "bg-gray-100 text-gray-800 rounded-bl-none shadow-md"
                   }`}
               >
                 {renderMessageContent(message.content)}
                 <p className="text-xs opacity-70 mt-1 sm:mt-2">
-                  {message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  {message.timestamp.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                 </p>
               </div>
             </div>
