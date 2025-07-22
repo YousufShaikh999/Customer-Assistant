@@ -379,7 +379,7 @@ ${productList}
   1. Use EXACTLY this HTML format:
   <ul>
     <li style='background:#f9f9f9; padding:16px; border:1px solid #ddd; border-radius:8px; margin-bottom:12px'>
-      <img src='IMAGE_URL' style='max-width:100%; height:auto; max-height:150px; margin-bottom:8px; border-radius:4px;' alt='PRODUCT_TITLE'/><br/>
+      <img src='IMAGE_URL' loading="lazy" style='max-width:100%; height:auto; max-height:150px; margin-bottom:8px; border-radius:4px;' alt='PRODUCT_TITLE'/><br/>
       <strong>PRODUCT_TITLE</strong> - BRIEF_DESCRIPTION<br/>
       Price: $PRODUCT_PRICE<br/>
       <a href='${config.baseUrl}/product/PRODUCT_SLUG' style='background:#2563EB; margin: 8px; color:#fff; padding:6px 12px; border-radius:6px; text-decoration:none; margin-right:8px; display:inline-block;'>View Product</a>
