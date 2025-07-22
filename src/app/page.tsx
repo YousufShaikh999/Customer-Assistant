@@ -132,9 +132,10 @@ const CustomerAssistant = () => {
   }, [messages]);
 
   const handleRedirect = (url: string) => {
-    // Open the URL in a new tab
-    window.open(url, "_blank");
+    console.log("Redirecting to:", url); // Debugging log
+    window.open(url, "_blank"); // This ensures the URL opens in a new tab
   };
+
 
   const handleAddToCart = (productId: string) => {
     // Store messages before redirecting
@@ -151,7 +152,7 @@ const CustomerAssistant = () => {
     sessionStorage.setItem("chatOpen", "true");
 
     // Redirect to checkout
-    handleRedirect(`/checkout/?add-to-cart=${productId}`);
+    handleRedirect(`https://plugin.ijkstaging.com/checkout/?add-to-cart=${productId}`);
   };
 
   const handleSubmit = async () => {
