@@ -132,8 +132,8 @@ const CustomerAssistant = () => {
   }, [messages]);
 
   const handleRedirect = (url: string) => {
-    // Send message to parent WordPress to handle the redirection
-    window.parent.postMessage({ type: "redirect", url: url }, "*");
+    // Open the URL in a new tab
+    window.open(url, "_blank");
   };
 
   const handleAddToCart = (productId: string) => {
@@ -202,8 +202,8 @@ const CustomerAssistant = () => {
         const errorData = await res.json().catch(() => ({}));
         throw new Error(
           errorData.error ||
-            errorData.message ||
-            `Request failed with status ${res.status}`
+          errorData.message ||
+          `Request failed with status ${res.status}`
         );
       }
 
