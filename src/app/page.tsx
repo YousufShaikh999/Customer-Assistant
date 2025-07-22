@@ -220,15 +220,12 @@ const CustomerAssistant = () => {
         };
         addMessage(aiMessage);
 
-        sessionStorage.setItem("chatMessages", JSON.stringify([...(messages || []), userMessage, aiMessage]));
+        // Store messages before redirecting
+        sessionStorage.setItem("chatMessages", JSON.stringify([...messages, userMessage, aiMessage]));
         sessionStorage.setItem("chatOpen", "true");
 
-        // Handle redirection
-        if (data.redirect.startsWith("/")) {
-          router.push(data.redirect);
-        } else {
-          handleRedirect(data.redirect);
-        }
+        // Use window.location for same-tab navigation or window.open for new tab
+        window.location.href = data.redirect;
         return;
       }
 
