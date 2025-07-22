@@ -256,10 +256,10 @@ export async function POST(req: NextRequest): Promise<NextResponse<AssistantResp
     const lowerQuery = query.toLowerCase();
 
     // Fix the keyword matching logic to ensure we catch variations of the keywords
-    const isRedirectionRequest = config.redirectionKeywords.some(kw => lowerQuery.includes(kw));
-    const isViewRequest = config.viewKeywords.some(kw => lowerQuery.includes(kw));
-    const isAddToCartRequest = /add to cart|put in cart|add this to cart|add item to cart/i.test(lowerQuery);
-
+    // In your API route (/api/customer-assistant)
+    const isRedirectionRequest = /(buy|purchase|order|checkout)\s+(?:me\s+)?(?:a\s+)?(?:the\s+)?(?:this\s+)?/i.test(lowerQuery);
+    const isViewRequest = /(view|see|show me|navigate to|go to)\s+(?:me\s+)?(?:a\s+)?(?:the\s+)?/i.test(lowerQuery);
+    const isAddToCartRequest = /(add to cart|put in cart|add this to cart|add item to cart)/i.test(lowerQuery);
     const productTypeMatch = lowerQuery.match(productRegex);
     const productType = productTypeMatch?.[0];
 
@@ -275,61 +275,55 @@ export async function POST(req: NextRequest): Promise<NextResponse<AssistantResp
       filteredProducts = filteredProducts.filter(p => p.price <= priceConstraint!);
     }
 
-    // Handle buy intent
-    if (isRedirectionRequest && productType && filteredProducts.length) {
-      const product = filteredProducts[0];
-      const productCard = `
-        <div class="assistant-product-card">
-            <img src='${product.image_url}' style='max-width:100%; height:auto; max-height:150px; margin-bottom:8px; border-radius:4px;' alt='${product.title}'/><br/>
-            <strong>${product.title}</strong> - Perfect for your needs!<br/>
-            Price: $${Number(product.price).toFixed(2)}<br/>
-            <button class="assistant-buy-now-btn" 
-                data-product-id="${product._id}" 
-                data-product-title="${product.title}"
-                style='background:#059669; margin: 8px; color:#fff; padding:6px 12px; border-radius:6px; border:none; cursor:pointer;'>
-                Buy Now
-            </button>
-        </div>
-        <p>Are you sure you want to buy ${product.title}? (Type "yes" to confirm)</p>`;
 
+    let productName = '';
+    if (isRedirectionRequest || isViewRequest || isAddToCartRequest) {
+      const productMatch = lowerQuery.match(/(?:buy|view|add to cart)\s+(?:me\s+)?(?:a\s+)?(?:the\s+)?([^\.\?]+)/i);
+      if (productMatch) {
+        productName = productMatch[1].trim();
+      }
+    }
+
+    if (isViewRequest && productName && filteredProducts.length) {
+      const product = filteredProducts[0];
       return NextResponse.json({
-        reply: productCard,
+        reply: `I'll take you to the ${product.title} page...`,
+        redirect: `${config.baseUrl}/product/${product.slug}`,
         history: [
           ...(history || []),
           { role: 'user', content: query },
-          { role: 'assistant', content: productCard }
+          { role: 'assistant', content: `I'll take you to the ${product.title} page...` }
         ]
       });
     }
 
-    if (isViewRequest && productType && filteredProducts.length) {
+    // For buy requests
+    if (isRedirectionRequest && productName && filteredProducts.length) {
       const product = filteredProducts[0];
       return NextResponse.json({
-        reply: `Redirecting you to view ${product.title}...`,
-        redirect: `http://plugin.ijkstaging.com/product/${product.slug}`,
-        product: product.title,
+        reply: `I'll help you purchase ${product.title}...`,
+        redirect: `${config.baseUrl}/checkout/?add-to-cart=${product._id}`,
         history: [
           ...(history || []),
           { role: 'user', content: query },
-          { role: 'assistant', content: `Redirecting you to view ${product.title}...` }
+          { role: 'assistant', content: `I'll help you purchase ${product.title}...` }
         ]
       });
     }
 
-    if (isAddToCartRequest && productType && filteredProducts.length) {
+    // For add to cart requests
+    if (isAddToCartRequest && productName && filteredProducts.length) {
       const product = filteredProducts[0];
       return NextResponse.json({
-        reply: `Redirecting you to add ${product.title} to your cart...`,
-        redirect: `http://plugin.ijkstaging.com/shop/?add-to-cart=${product._id}`,
-        product: product.title,
+        reply: `Adding ${product.title} to your cart...`,
+        redirect: `${config.baseUrl}/shop/?add-to-cart=${product._id}`,
         history: [
           ...(history || []),
           { role: 'user', content: query },
-          { role: 'assistant', content: `Redirecting you to add ${product.title} to your cart...` }
+          { role: 'assistant', content: `Adding ${product.title} to your cart...` }
         ]
       });
     }
-
     // Prepare AI prompt
     const productList = mappedProducts
       .map(p => `ID: ${p._id}\nTitle: ${p.title}\nPrice: $${p.price}\nStock: ${p.inventory}\nDescription: ${p.description}\nImage: ${p.image_url}`)
