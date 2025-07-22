@@ -6,23 +6,16 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-// Enhanced Type Definitions
-interface ProductRow extends mysql.RowDataPacket {
-  product_id: number;
+// Product Interface (matches SQLite version)
+interface Product {
+  slug: any;
+  _id: string;
   title: string;
   price: number;
+  inventory: number;
   description: string;
-  thumbnail_id?: string;
-  post_name: string; // Added for product slug
-}
-
-interface Product {
-  id: number;
-  title: string;
-  price: string;
-  description: string;
+  category?: string;
   image_url?: string;
-  slug: string; // Added for product slug
 }
 
 interface ChatMessage {
@@ -30,26 +23,58 @@ interface ChatMessage {
   content: string;
 }
 
-interface APIResponse {
+interface AssistantResponse {
   reply: string;
-  products?: Product[];
+  redirect?: string;
+  product?: string;
+  addToCart?: { id: string; title: string; price: number; image_url?: string };
   history?: ChatMessage[];
   error?: string;
-  debug?: any;
-  redirect?: string; // Added for redirect URLs
 }
 
 const requestSchema = z.object({
-  query: z.string().min(1, "Query cannot be empty").max(500, "Query too long"),
+  query: z.string().min(1).max(500),
   history: z.array(z.object({
     role: z.enum(['user', 'assistant']),
     content: z.string()
   })).optional()
 });
 
-// Initialize services with better error handling
+// Configuration (matches SQLite version)
+interface Config {
+  maxHistoryLength: number;
+  aiModel: "gpt-3.5-turbo" | "gpt-4";
+  baseUrl: string;
+  viewKeywords: string[];
+  redirectionKeywords: string[];
+  storeName?: string;
+}
+
+const config: Config = {
+  maxHistoryLength: 5,
+  aiModel: "gpt-3.5-turbo",
+  baseUrl: "http://plugin.ijkstaging.com",
+  viewKeywords: [
+    'show me', 'view', 'navigate to', 'head to', 'go to',
+    'see', 'see more', 'see details', 'details', 'details of',
+    'learn more', 'open', 'visit', 'explore', 'look at',
+    'take me to', 'redirect me to', 'check out', 'move to',
+    'click here', 'head over to', 'take a look at', 'take me',
+    'search for', 'access', 'load', 'jump to', 'browse'
+  ],
+  redirectionKeywords: [
+    'buy', 'buy now', 'purchase', 'order', 'checkout'
+  ],
+  storeName: process.env.STORE_NAME || "our store"
+};
+
+// Helper functions
+function escapeRegex(string: string): string {
+  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// Initialize services
 const initializeServices = () => {
-  // Verify required environment variables
   const requiredEnvVars = ['OPENAI_API_KEY', 'WP_DB_HOST', 'WP_DB_USER', 'WP_DB_PASSWORD', 'WP_DB_NAME'];
   const missingVars = requiredEnvVars.filter(varName => !process.env[varName]);
 
@@ -57,278 +82,344 @@ const initializeServices = () => {
     throw new Error(`Missing environment variables: ${missingVars.join(', ')}`);
   }
 
-  // Initialize OpenAI
-  const openai = new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY!,
-    timeout: 20000 // 20 second timeout
-  });
-
-  // Initialize Database Pool
-  const pool = mysql.createPool({
-    host: process.env.WP_DB_HOST,
-    user: process.env.WP_DB_USER,
-    password: process.env.WP_DB_PASSWORD || '',
-    database: process.env.WP_DB_NAME,
-    waitForConnections: true,
-    connectionLimit: 10,
-    queueLimit: 0
-  });
-
-  return { openai, pool };
+  return {
+    openai: new OpenAI({ apiKey: process.env.OPENAI_API_KEY! }),
+    pool: mysql.createPool({
+      host: process.env.WP_DB_HOST,
+      user: process.env.WP_DB_USER,
+      password: process.env.WP_DB_PASSWORD || '',
+      database: process.env.WP_DB_NAME,
+      waitForConnections: true,
+      connectionLimit: 10,
+      queueLimit: 0
+    })
+  };
 };
 
-let services: { openai: OpenAI; pool: mysql.Pool };
+let services: ReturnType<typeof initializeServices>;
 
 try {
   services = initializeServices();
 } catch (initError) {
   console.error("Service initialization failed:", initError);
-  throw new Error("Service initialization error");
+  throw initError;
 }
 
-// Helper function to detect action words
-const detectAction = (query: string, products: Product[]): {action: 'view' | 'add_to_cart' | 'buy' | null, product: Product | null} => {
-  const lowerQuery = query.toLowerCase();
-  const viewWords = ['view', 'show', 'details', 'see', 'look at', 'display'];
-  const cartWords = ['add to cart', 'put in cart', 'in cart', 'cart', 'add it'];
-  const buyWords = ['buy', 'buy now', 'purchase', 'checkout', 'order'];
-  
-  // Find the most relevant product in the query
-  const matchedProduct = products.find(product => 
-    lowerQuery.includes(product.title.toLowerCase()) ||
-    lowerQuery.includes(product.slug.toLowerCase())
-  );
-
-  if (!matchedProduct) {
-    return { action: null, product: null };
-  }
-
-  if (viewWords.some(word => lowerQuery.includes(word))) {
-    return { action: 'view', product: matchedProduct };
-  }
-
-  if (cartWords.some(word => lowerQuery.includes(word))) {
-    return { action: 'add_to_cart', product: matchedProduct };
-  }
-
-  if (buyWords.some(word => lowerQuery.includes(word))) {
-    return { action: 'buy', product: matchedProduct };
-  }
-
-  return { action: null, product: matchedProduct };
-};
-
-export async function POST(req: NextRequest) {
-  const startTime = Date.now();
+export async function POST(req: NextRequest): Promise<NextResponse<AssistantResponse>> {
   let connection: mysql.PoolConnection | null = null;
 
   try {
-    // Parse and validate request
-    const body = await req.json().catch(() => {
-      throw new Error("Invalid JSON body");
-    });
+    const body = await req.json();
+    const { query, history } = requestSchema.parse(body);
 
-    const validationResult = requestSchema.safeParse(body);
-    if (!validationResult.success) {
-      return NextResponse.json(
-        {
-          reply: "Invalid request format",
-          error: validationResult.error.flatten()
-        },
-        { status: 400 }
-      );
+    // Get database connection
+    connection = await services.pool.getConnection();
+
+    // Fetch products
+    const [products] = await connection.query<any[]>(`
+  SELECT 
+    p.ID AS _id,
+    p.post_title AS title,
+    CAST(pm_price.meta_value AS DECIMAL(10,2)) AS price,
+    100 AS inventory,
+    p.post_content AS description,
+    p.post_name AS slug,
+    pm_thumb_img.guid AS image_url
+  FROM wp_posts p
+  LEFT JOIN wp_postmeta pm_price ON p.ID = pm_price.post_id AND pm_price.meta_key = '_price'
+  LEFT JOIN wp_postmeta pm_thumb ON p.ID = pm_thumb.post_id AND pm_thumb.meta_key = '_thumbnail_id'
+  LEFT JOIN wp_posts pm_thumb_img ON pm_thumb.meta_value = pm_thumb_img.ID
+  WHERE p.post_type = 'product'
+    AND p.post_status = 'publish'
+    AND pm_price.meta_value IS NOT NULL
+`);
+
+    if (!products.length) {
+      return NextResponse.json({
+        reply: "Currently we don't have any products available. Please check back later.",
+        history: history || []
+      });
     }
 
-    const { query, history = [] } = validationResult.data;
+    // Map to consistent product structure
+    const mappedProducts: Product[] = products.map(p => ({
+      ...p,
+      inventory: 100,  // Default value
+      image_url: p.image_url || undefined
+    }));
 
-    // Add a starting message to the history if it's the first interaction
-    const updatedHistory = history.length === 0
-      ? [{ role: 'assistant', content: "Hello! I'm your shopping assistant. How can I assist you today?" }]
-      : history;
+    // Confirmation handling (buy flow)
+    let confirmationProductId: string | null = null;
+    if (history && history.length > 0) {
+      const lastAssistantMessage = history[history.length - 1].content;
+      const match = lastAssistantMessage.match(/Are you sure you want to buy\s+([^<\?]+)\?/i);
+      if (match?.[1]) {
+        const productName = match[1].trim();
+        const product = mappedProducts.find(p =>
+          p.title.toLowerCase().includes(productName.toLowerCase())
+        );
+        if (product) confirmationProductId = product._id;
+      }
+    }
 
-    // Database operations
-    try {
-      connection = await services.pool.getConnection();
-      console.log("Database connection established");
-
-      const [products] = await connection.query<ProductRow[]>(`
-        SELECT 
-          p.ID as product_id,
-          p.post_title as title,
-          p.post_name as post_name,
-          pm_price.meta_value as price,
-          p.post_content as description,
-          pm_thumbnail.meta_value as thumbnail_id
-        FROM wp_posts p
-        LEFT JOIN wp_postmeta pm_price ON p.ID = pm_price.post_id AND pm_price.meta_key = '_price'
-        LEFT JOIN wp_postmeta pm_thumbnail ON p.ID = pm_thumbnail.post_id AND pm_thumbnail.meta_key = '_thumbnail_id'
-        WHERE p.post_type = 'product' 
-        AND p.post_status = 'publish'
-        AND pm_price.meta_value IS NOT NULL
-        LIMIT 10
-      `);
-
-      if (!products.length) {
+    // Handle buy confirmation
+    if (confirmationProductId && query.toLowerCase().includes('yes')) {
+      const product = mappedProducts.find(p => p._id === confirmationProductId);
+      if (!product) {
         return NextResponse.json({
-          reply: "Currently we don't have any products available. Please check back later.",
-          history: updatedHistory
+          reply: "Sorry, I couldn't find that product anymore.",
+          history: [
+            ...(history || []),
+            { role: 'user', content: query },
+            { role: 'assistant', content: "Sorry, I couldn't find that product anymore." }
+          ]
         });
       }
-
-      // Get product images for products that have thumbnail IDs
-      const productImages = new Map<number, string>();
-      const thumbnailIds = products
-        .filter(p => p.thumbnail_id)
-        .map(p => p.thumbnail_id);
-
-      if (thumbnailIds.length > 0) {
-        const [images] = await connection.query(`
-          SELECT 
-            posts.ID as image_id,
-            posts.guid as image_url
-          FROM wp_posts posts
-          WHERE posts.ID IN (${thumbnailIds.join(',')})
-          AND posts.post_type = 'attachment'
-        `);
-
-        if (Array.isArray(images)) {
-          images.forEach((img: any) => {
-            productImages.set(img.image_id, img.image_url);
-          });
-        }
-      }
-
-      // Transform products to include image URLs and slugs
-      const productsWithImages: Product[] = products.map(p => ({
-        id: p.product_id,
-        title: p.title,
-        price: p.price.toString(),
-        description: p.description,
-        image_url: p.thumbnail_id ? productImages.get(parseInt(p.thumbnail_id)) : undefined,
-        slug: p.post_name
-      }));
-
-      // Check for direct actions before processing with AI
-      const { action, product } = detectAction(query, productsWithImages);
-      
-      if (action && product) {
-        let redirectUrl = '';
-        
-        switch (action) {
-          case 'view':
-            redirectUrl = `http://plugin.ijkstaging.com/product/${product.slug}/`;
-            break;
-          case 'add_to_cart':
-            redirectUrl = `http://plugin.ijkstaging.com/shop/?add-to-cart=${product.id}`;
-            break;
-          case 'buy':
-            redirectUrl = `http://plugin.ijkstaging.com/checkout/?add-to-cart=${product.id}`;
-            break;
-        }
-
-        return NextResponse.json({
-          reply: `Redirecting you to ${product.title}...`,
-          redirect: redirectUrl,
-          history: [...updatedHistory, { role: 'user', content: query }, { role: 'assistant', content: `Redirecting to ${product.title}` }]
-        });
-      }
-
-      // Prepare AI context (keep it concise to reduce processing time)
-      const productContext = productsWithImages
-        .map(p => `ID: ${p.id}\nTitle: ${p.title}\nSlug: ${p.slug}\nPrice: $${p.price}\nDescription: ${p.description.substring(0, 200)}${p.image_url ? `\nImage: ${p.image_url}` : ''}`)
-        .join("\n\n---\n");
-
-      const conversationContext = updatedHistory
-        .slice(-5)
-        .map(msg => `${msg.role}: ${msg.content}`)
-        .join('\n');
-
-      const prompt = `You are a friendly, helpful shopping assistant of Shopping Store. Your job is to sound like a real person—warm, engaging, and natural. Use contractions, occasional fillers (like "let's see", "hmm", "oh!"), and polite enthusiasm. Carry the conversation forward, referencing what the customer said before.Check customers query and strictly match the product if product and query are not matching strictly then dont show products. Match products and query like chair to chair, sofa to sofa if product is not perfectly matching query then dont show. Dont show table or other if query have chair also for other types of situations. If you need to clarify, ask a friendly follow-up question. Use conversational transitions ("By the way", "Oh, and...").
-
-Previous conversation:
-${conversationContext || 'No previous conversation'}
-
-Available products:
-${productContext}
-
-Customer question: "${query}"
-
-Guidelines:
-- Be friendly but professional
-- Dont recommend products until user asks for recommendations
-- If user asks to recommend products, provide at least 3 relevant ones
-- If user asks to show some products, provide at least 3
-- If user asks for recommendations, provide at least 3 products
-- If user asks to provide specific amount of products, provide that many
-- If user asks for a specific product, provide that product plus 2-3 similar ones
-- Include product IDs when available
-- Keep individual product descriptions brief to fit more products
-- After providing recommendations, always ask if they need help with anything else
-
-
-**IMPORTANT: When recommending products, always use this HTML format exactly:**
-
-<ul style="list-style-type: none; padding: 0;">
-  <li style='background:#f9f9f9; padding:16px; border:1px solid #ddd; border-radius:8px; margin-bottom:12px; display:flex; flex-direction:column; align-items:center; text-align:center; box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);'>
-    <img src='http://plugin.ijkstaging.com/wp-content/uploads/2025/07/wp_dummy_content_generator_PRODUCT_ID.jpg' 
-         style='max-width:100%; height:auto; max-height:200px; margin-bottom:12px; border-radius:8px;' alt='PRODUCT_TITLE' />
-    <strong style='font-size:1.2rem; font-weight:bold; color:#333;'>PRODUCT_TITLE</strong>
-    <p style='font-size:1rem; color:#555; margin:8px 0;'>Brief reason why this fits their needs</p>
-    <p style='font-size:1.1rem; color:#333; font-weight:bold; margin-bottom:12px;'>Price: $PRODUCT_PRICE</p>
-    <div style="display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; width: 100%;">
-      <a href='http://plugin.ijkstaging.com/product/PRODUCT_SLUG' target='_blank'
-         style='background:#2563EB; color:#fff; padding:10px 20px; border-radius:6px; text-decoration:none; font-size:1rem;'>View Product</a>
-      <a href='http://plugin.ijkstaging.com/shop/?add-to-cart=PRODUCT_ID' target='_blank'
-         style='background:#2563EB; color:#fff; padding:10px 20px; border-radius:6px; text-decoration:none; font-size:1rem;'>Add to Cart</a>
-      <a href='http://plugin.ijkstaging.com/checkout/?add-to-cart=PRODUCT_ID' target='_blank'
-         style='background:#059669; color:#fff; padding:10px 20px; border-radius:6px; text-decoration:none; font-size:1rem;'>Buy Now</a>
-    </div>
-  </li>
-</ul>
-
-IMPORTANT: Always show multiple products. Replace PRODUCT_ID, PRODUCT_TITLE, PRODUCT_PRICE, and PRODUCT_SLUG with actual values from the available products.`;
-
-      // Get AI response (optimize time by reducing tokens and request size)
-      const completion = await services.openai.chat.completions.create({
-        model: "gpt-3.5-turbo",
-        messages: [{ role: "user", content: prompt }],
-        temperature: 0.7,
-        max_tokens: 800 // Reduce the token limit to improve response time
-      });
-
-      const reply = completion.choices[0]?.message?.content ||
-        "I couldn't generate a response. Please try again.";
 
       return NextResponse.json({
-        reply,
-        products: productsWithImages,
-        history: [...updatedHistory, { role: 'user', content: query }, { role: 'assistant', content: reply }]
+        reply: `Redirecting you to purchase ${product.title}...`,
+        redirect: `${config.baseUrl}/checkout/?add-to-cart=${product._id}`,
+        product: product.title,
+        history: [
+          ...(history || []),
+          { role: 'user', content: query },
+          { role: 'assistant', content: `Redirecting you to purchase ${product.title}...` }
+        ]
       });
-
-    } catch (dbError) {
-      console.error("Database error:", dbError);
-      return NextResponse.json(
-        {
-          reply: "Sorry, we're having trouble accessing our product information.",
-          error: "Database operation failed",
-          debug: process.env.NODE_ENV === 'development' ? dbError : undefined
-        },
-        { status: 500 }
-      );
-    } finally {
-      if (connection) connection.release();
     }
 
-  } catch (error) {
-    console.error("API processing error:", error);
+    // Add to cart confirmation handling
+    let confirmationAddToCartProductId: string | null = null;
+    if (history && history.length > 0) {
+      const lastAssistantMessage = history[history.length - 1].content;
+      const match = lastAssistantMessage.match(/Are you sure you want to add ([^<\?]+) to your cart\?/i);
+      if (match?.[1]) {
+        const productName = match[1].trim();
+        const product = mappedProducts.find(p =>
+          p.title.toLowerCase().includes(productName.toLowerCase())
+        );
+        if (product) confirmationAddToCartProductId = product._id;
+      }
+    }
+
+    // Handle add to cart confirmation
+    if (confirmationAddToCartProductId && query.toLowerCase().includes('yes')) {
+      const product = mappedProducts.find(p => p._id === confirmationAddToCartProductId);
+      if (!product) {
+        return NextResponse.json({
+          reply: "Sorry, I couldn't find that product anymore.",
+          history: [
+            ...(history || []),
+            { role: 'user', content: query },
+            { role: 'assistant', content: "Sorry, I couldn't find that product anymore." }
+          ]
+        });
+      }
+
+      return NextResponse.json({
+        reply: `Added <b>${product.title}</b> to your cart!`,
+        addToCart: {
+          id: product._id,
+          title: product.title,
+          price: product.price,
+          image_url: product.image_url
+        },
+        history: [
+          ...(history || []),
+          { role: 'user', content: query },
+          { role: 'assistant', content: `Added <b>${product.title}</b> to your cart!` }
+        ]
+      });
+    }
+
+    // Extract price constraints
+    let priceConstraint: number | null = null;
+    const priceMatch = query.match(/(?:under|below|less than|cheaper than|<=?)\s*\$?([0-9]+)/i);
+    if (priceMatch?.[1]) priceConstraint = parseFloat(priceMatch[1]);
+
+    // Build product terms for matching
+    const allTerms = mappedProducts.flatMap(p => [
+      p.title.toLowerCase(),
+      ...(p.category ? p.category.toLowerCase().split(/\s*,\s*/) : [])
+    ]);
+    const productTerms = [...new Set(allTerms.filter(term => term.length > 2))];
+
+    const productRegex = new RegExp(
+      productTerms
+        .sort((a, b) => b.length - a.length)
+        .map(escapeRegex)
+        .join('|'),
+      'i'
+    );
+
+    // Detect intents
+    const lowerQuery = query.toLowerCase();
+    const isRedirectionRequest = config.redirectionKeywords.some(kw => lowerQuery.includes(kw));
+    const isViewRequest = config.viewKeywords.some(kw => lowerQuery.includes(kw));
+    const isAddToCartRequest = /add to cart|put in cart|add this to cart|add item to cart/i.test(lowerQuery);
+
+    const productTypeMatch = lowerQuery.match(productRegex);
+    const productType = productTypeMatch?.[0];
+
+    // Filter products
+    let filteredProducts = mappedProducts;
+    if (productType) {
+      filteredProducts = filteredProducts.filter(p =>
+        p.title.toLowerCase().includes(productType) ||
+        (p.category && p.category.toLowerCase().includes(productType))
+      );
+    }
+    if (priceConstraint !== null) {
+      filteredProducts = filteredProducts.filter(p => p.price <= priceConstraint!);
+    }
+
+    // Handle buy intent
+    if (isRedirectionRequest && productType && filteredProducts.length) {
+      const product = filteredProducts[0];
+      const productCard = `
+<div class="assistant-product-card">
+  <img src='${product.image_url}' style='max-width:100%; height:auto; max-height:150px; margin-bottom:8px; border-radius:4px;' alt='${product.title}'/><br/>
+  <strong>${product.title}</strong> - Perfect for your needs!<br/>
+  Price: $${Number(product.price).toFixed(2)}<br/>
+  <button class="assistant-buy-now-btn" 
+    data-product-id="${product._id}" 
+    data-product-title="${product.title}"
+    style='background:#059669; margin: 8px; color:#fff; padding:6px 12px; border-radius:6px; border:none; cursor:pointer;'>
+    Buy Now
+  </button>
+</div>
+<p>Are you sure you want to buy ${product.title}? (Type "yes" to confirm)</p>`;
+
+      return NextResponse.json({
+        reply: productCard,
+        history: [
+          ...(history || []),
+          { role: 'user', content: query },
+          { role: 'assistant', content: productCard }
+        ]
+      });
+    }
+
+    // Handle view intent
+    if (isViewRequest && productType && filteredProducts.length) {
+      const product = filteredProducts[0];
+      return NextResponse.json({
+        reply: `Redirecting you to view ${product.title}...`,
+        redirect: `https://plugin.ijkstaging.com/product/${product.slug}`,
+        product: product.title,
+        history: [
+          ...(history || []),
+          { role: 'user', content: query },
+          { role: 'assistant', content: `Redirecting you to view ${product.title}...` }
+        ]
+      });
+    }
+
+    // Handle add to cart intent
+    if (isAddToCartRequest && productType && filteredProducts.length) {
+      const product = filteredProducts[0];
+      const productCard = `
+<ul>
+  <li style='background:#f9f9f9; padding:16px; border:1px solid #ddd; border-radius:8px; margin-bottom:12px'>
+    <img src='${product.image_url}' style='max-width:100%; height:auto; max-height:150px; margin-bottom:8px; border-radius:4px;' alt='${product.title}'/><br/>
+    <strong>${product.title}</strong><br/>
+    Price: $${product.price.toFixed(2)}<br/>
+    <button class="assistant-add-to-cart-btn"
+      data-product='{"id":"${product._id}","title":"${product.title}","price":${product.price},"image_url":"${product.image_url}"}'
+      style="background:#f59e42; color:#fff; padding:6px 12px; border-radius:6px; border:none; margin:8px; cursor:pointer;">
+      Add to Cart
+    </button>
+  </li>
+</ul>
+Are you sure you want to add ${product.title} to your cart?`;
+
+      return NextResponse.json({
+        reply: productCard,
+        history: [
+          ...(history || []),
+          { role: 'user', content: query },
+          { role: 'assistant', content: productCard }
+        ]
+      });
+    }
+
+    // Prepare AI prompt
+    const productList = mappedProducts
+      .map(p => `ID: ${p._id}\nTitle: ${p.title}\nPrice: $${p.price}\nStock: ${p.inventory}\nDescription: ${p.description}\nImage: ${p.image_url}`)
+      .join("\n\n");
+
+    const conversationContext = history
+      ?.slice(-config.maxHistoryLength)
+      ?.map(msg => `${msg.role === 'user' ? 'Customer' : 'Assistant'}: ${msg.content}`)
+      ?.join('\n') || "No previous conversation";
+
+    const prompt = `
+You are a friendly, helpful shopping assistant for ${config.storeName}. Your job is to sound like a real person—warm, engaging, and natural. Use contractions, occasional fillers (like "let's see", "hmm", "oh!"), and polite enthusiasm.
+
+**STRICT RULES:**
+1. ONLY recommend products that EXACTLY match the customer's query
+2. If no products match perfectly, DO NOT show any products
+3. NEVER recommend unrelated products (e.g., if asked for chairs, never show tables)
+4. Always use the provided HTML card format for product displays
+5. Include product images in every product card
+
+**Previous conversation context:**  
+${conversationContext}  
+
+**Customer's latest question:**  
+"${query}"  
+
+**Available products:**  
+${productList}  
+
+**Response Guidelines:**
+- Be conversational: "Oh, I found..." or "Hmm, let me check..."
+- If no matching products: "Hmm, I checked but we don't have XYZ right now..."
+- When showing products:
+  1. Use EXACTLY this HTML format:
+  <ul>
+    <li style='background:#f9f9f9; padding:16px; border:1px solid #ddd; border-radius:8px; margin-bottom:12px'>
+      <img src='IMAGE_URL' style='max-width:100%; height:auto; max-height:150px; margin-bottom:8px; border-radius:4px;' alt='PRODUCT_TITLE'/><br/>
+      <strong>PRODUCT_TITLE</strong> - BRIEF_DESCRIPTION<br/>
+      Price: $PRODUCT_PRICE<br/>
+      <a href='${config.baseUrl}/product/PRODUCT_SLUG' style='background:#2563EB; margin: 8px; color:#fff; padding:6px 12px; border-radius:6px; text-decoration:none; margin-right:8px; display:inline-block;'>View Product</a>
+      <a href='${config.baseUrl}/checkout/?add-to-cart=PRODUCT_ID' style='background:#059669; margin: 8px; color:#fff; padding:6px 12px; border-radius:6px; text-decoration:none; display:inline-block;'>Buy Now</a>
+      <button class="assistant-add-to-cart-btn"
+        data-product='{"id":"PRODUCT_ID","title":"PRODUCT_TITLE","price":PRODUCT_PRICE,"image_url":"IMAGE_URL"}'
+        style="background:#f59e42; color:#fff; padding:6px 12px; border-radius:6px; border:none; margin:8px; cursor:pointer;">
+        Add to Cart
+      </button>
+    </li>
+  </ul>
+`;
+
+    const res = await services.openai.chat.completions.create({
+      model: config.aiModel,
+      messages: [{ role: "user", content: prompt }],
+      temperature: 0.7,
+      max_tokens: 1000
+    });
+
+    const reply = res.choices[0]?.message?.content || "I couldn't generate a response. Please try again.";
+    return NextResponse.json({
+      reply,
+      history: [
+        ...(history || []),
+        { role: 'user', content: query },
+        { role: 'assistant', content: reply }
+      ]
+    });
+
+  } catch (err) {
+    console.error("Customer Assistant Error:", err);
     return NextResponse.json(
       {
-        reply: "Sorry, I'm having trouble processing your request.",
-        error: error instanceof Error ? error.message : "Unknown error",
-        debug: process.env.NODE_ENV === 'development' ? error : undefined,
-        processingTime: `${Date.now() - startTime}ms`
+        reply: "Sorry, I encountered an error. Please try again.",
+        error: (err as Error).message
       },
       { status: 500 }
     );
+  } finally {
+    if (connection) connection.release();
   }
 }
