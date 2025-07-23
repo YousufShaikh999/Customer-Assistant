@@ -54,7 +54,7 @@ interface Config {
 
 const config: Config = {
   maxHistoryLength: 5,
-  aiModel: "gpt-3.5-turbo",
+  aiModel: "gpt-4",
   baseUrl: "http://plugin.ijkstaging.com",
   viewKeywords: [
     'show me', 'view', 'navigate to', 'head to', 'go to',
