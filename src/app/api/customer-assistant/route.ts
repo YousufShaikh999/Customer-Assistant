@@ -636,6 +636,7 @@ ${conversationContext}
 ${productList}
 
 **RESPONSE GUIDELINES:**
+- If user greets you, respond warmly and ask how you can help
 - If products available: Show them with the exact HTML format below
 - If no matches: "I checked our inventory but don't currently have [requested item]. However, here are some great alternatives..." then show related products
 - Be conversational and helpful
