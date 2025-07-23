@@ -172,11 +172,12 @@ function normalizeText(text: string): string {
 
 // Enhanced product matching with better scoring
 function findMatchingProducts(query: string, products: Product[]): Product[] {
+  const inStockProducts = products.filter(p => p.inventory > 0);
   const normalizedQuery = normalizeText(query);
   const queryWords = normalizedQuery.split(' ').filter(word => word.length > 2);
   const matchedProducts: (Product & { matchScore: number })[] = [];
 
-  products.forEach(product => {
+  inStockProducts.forEach(product => {
     const productText = normalizeText(`${product.title} ${product.description || ''} ${product.category || ''} ${product.short_description || ''}`);
     let score = 0;
 
@@ -423,7 +424,7 @@ async function fetchProducts(connection: mysql.PoolConnection): Promise<Product[
 
   return products.map(p => ({
     ...p,
-    inventory: p.inventory || 100,
+    inventory: p.inventory || 0,
     image_url: p.image_url || undefined,
     category: p.category || undefined,
     rating: p.rating || 0,
@@ -598,7 +599,31 @@ export async function POST(req: NextRequest): Promise<NextResponse<AssistantResp
 
     const prompt = `You are a helpful, knowledgeable shopping assistant for ${config.storeName}. Be conversational, friendly, and helpful.
 
-**STRICT INVENTORY RULE: ONLY recommend products from the "AVAILABLE PRODUCTS" list below. NEVER suggest products not in this list.**
+1. If the EXACT requested product exists in AVAILABLE PRODUCTS, show it first
+2. If no exact match but similar products exist, say: "We don't have [exact product] but here are similar items:"
+3. If nothing similar exists, say: "I couldn't find [product] in our current inventory. Can I help you with something else?"
+4. Dont suggest products on your own, only from the AVAILABLE PRODUCTS list
+MOST IMPORTANT: NEVER suggest products outside the AVAILABLE PRODUCTS list
+
+
+NEVER DO THIS TYPE OF NONSENSE:
+
+"USER: is there any balloons in store
+YOU: I checked our inventory but don't currently have balloons. However, here are some great alternatives:
+PRODUCT_TITLE
+Alternative Balloons Pack(this product is not in the AVAILABLE PRODUCTS list but you suggested it dont do this type of nonsense)
+Perfect for parties and celebrations"
+
+Respond in this format:
+[if exact match]
+"We have [product name]! [description] [price] [action buttons]"
+
+[if similar products]
+"We don't have [exact request] but you might like these: [list products]"
+
+[if no matches]
+"I couldn't find [product] in stock. Would you like help with something else?"
+
 
 **CUSTOMER QUERY:** "${query}"
 **DETECTED INTENT:** ${Object.entries(userIntent).filter(([_, v]) => v).map(([k, _]) => k).join(', ')}
@@ -618,7 +643,7 @@ ${productList}
 - Suggest alternatives if original request not available
 
 **EXACT HTML FORMAT:**
-<ul>
+<ul style='list-style:none;'>
   <li style='background:#fff; padding:16px; border-radius:12px; margin-bottom:16px; box-shadow:0 2px 8px rgba(0,0,0,0.08);'>
   <img src='IMAGE_URL' loading="lazy" style='width:100%; height:180px; object-fit:cover; border-radius:8px; margin-bottom:12px;' alt='PRODUCT_TITLE'/>
   <div style='margin-bottom:12px;'>
