@@ -32,10 +32,10 @@ interface AssistantResponse {
   reply: string;
   redirect?: string;
   product?: string;
-  addToCart?: {
-    id: string;
-    title: string;
-    price: number;
+  addToCart?: { 
+    id: string; 
+    title: string; 
+    price: number; 
     image_url?: string;
     quantity?: number;
   };
@@ -90,7 +90,7 @@ const config: Config = {
     'buy', 'buy now', 'purchase', 'order', 'checkout', 'get this', 'i want this'
   ],
   storeName: process.env.STORE_NAME || "our store",
-
+  
   // Enhanced semantic keyword mapping
   semanticKeywords: {
     // Furniture & Home
@@ -99,40 +99,40 @@ const config: Config = {
     'storage': ['cabinet', 'drawer', 'shelf', 'bookshelf', 'wardrobe', 'closet', 'chest', 'organizer'],
     'lighting': ['lamp', 'light', 'chandelier', 'bulb', 'fixture', 'sconce', 'pendant'],
     'bedding': ['bed', 'mattress', 'pillow', 'sheet', 'blanket', 'comforter', 'duvet', 'pillowcase'],
-
+    
     // Decoration & Party
     'party_decor': ['balloon', 'streamer', 'banner', 'confetti', 'garland', 'backdrop', 'party supplies'],
     'lighting_decor': ['candle', 'fairy lights', 'string lights', 'lantern', 'torch', 'led lights'],
     'tableware': ['plate', 'cup', 'glass', 'napkin', 'tablecloth', 'cutlery', 'dinnerware'],
     'flowers': ['flower', 'bouquet', 'vase', 'plant', 'centerpiece', 'floral arrangement'],
-
+    
     // Kitchen & Dining
     'cookware': ['pan', 'pot', 'skillet', 'wok', 'bakeware', 'cookware', 'casserole'],
     'appliances': ['blender', 'mixer', 'toaster', 'microwave', 'oven', 'refrigerator', 'food processor'],
     'utensils': ['spoon', 'fork', 'knife', 'spatula', 'whisk', 'tongs', 'ladle'],
-
+    
     // Electronics
     'audio': ['speaker', 'headphone', 'microphone', 'stereo', 'radio', 'earbuds'],
     'computing': ['laptop', 'computer', 'tablet', 'phone', 'monitor', 'keyboard', 'mouse'],
     'gaming': ['console', 'controller', 'game', 'headset', 'gaming chair'],
-
+    
     // Clothing & Accessories
     'clothing': ['shirt', 'pants', 'dress', 'jacket', 'shoes', 'hat', 'sweater'],
     'accessories': ['bag', 'wallet', 'belt', 'watch', 'jewelry', 'sunglasses', 'purse'],
-
+    
     // Sports & Fitness
     'fitness': ['weight', 'dumbbell', 'treadmill', 'yoga mat', 'exercise bike', 'resistance band'],
     'outdoor': ['tent', 'sleeping bag', 'backpack', 'hiking boots', 'camping gear'],
-
+    
     // Beauty & Personal Care
     'skincare': ['cream', 'lotion', 'serum', 'cleanser', 'moisturizer', 'sunscreen'],
     'makeup': ['lipstick', 'foundation', 'mascara', 'eyeshadow', 'blush', 'concealer'],
-
+    
     // Tools & Hardware
     'tools': ['hammer', 'screwdriver', 'drill', 'wrench', 'saw', 'pliers'],
     'hardware': ['screw', 'nail', 'bolt', 'wire', 'cable', 'connector']
   },
-
+  
   // Enhanced event-based keyword mapping
   eventKeywords: {
     'birthday': ['balloon', 'candle', 'cake', 'party hat', 'banner', 'streamer', 'confetti', 'gift wrap', 'decoration', 'birthday supplies'],
@@ -172,30 +172,29 @@ function normalizeText(text: string): string {
 
 // Enhanced product matching with better scoring
 function findMatchingProducts(query: string, products: Product[]): Product[] {
-  const inStockProducts = products.filter(p => p.inventory > 0);
   const normalizedQuery = normalizeText(query);
   const queryWords = normalizedQuery.split(' ').filter(word => word.length > 2);
   const matchedProducts: (Product & { matchScore: number })[] = [];
-
-  inStockProducts.forEach(product => {
+  
+  products.forEach(product => {
     const productText = normalizeText(`${product.title} ${product.description || ''} ${product.category || ''} ${product.short_description || ''}`);
     let score = 0;
-
+    
     // 1. Exact phrase match (highest priority)
     if (productText.includes(normalizedQuery)) {
       score += 100;
     }
-
+    
     // 2. Title exact match
     if (normalizeText(product.title).includes(normalizedQuery)) {
       score += 90;
     }
-
+    
     // 3. Word matching with position bonus
     const titleWords = normalizeText(product.title).split(' ');
     let titleMatches = 0;
     let descriptionMatches = 0;
-
+    
     queryWords.forEach(queryWord => {
       if (titleWords.some(titleWord => titleWord.includes(queryWord))) {
         titleMatches++;
@@ -206,58 +205,58 @@ function findMatchingProducts(query: string, products: Product[]): Product[] {
         score += 5;
       }
     });
-
+    
     // 4. Bonus for high match ratio
     const matchRatio = (titleMatches + descriptionMatches) / queryWords.length;
     if (matchRatio > 0.5) {
       score += matchRatio * 20;
     }
-
+    
     // 5. Category bonus
     if (product.category && normalizedQuery.includes(normalizeText(product.category))) {
       score += 25;
     }
-
+    
     if (score > 15) { // Minimum threshold
       matchedProducts.push({ ...product, matchScore: score });
     }
   });
-
+  
   // Add semantic matching
   for (const [category, keywords] of Object.entries(config.semanticKeywords)) {
     for (const keyword of keywords) {
       if (normalizedQuery.includes(keyword)) {
         products.forEach(product => {
           const productText = normalizeText(`${product.title} ${product.description || ''} ${product.category || ''}`);
-
-          if (keywords.some(k => productText.includes(k)) &&
-            !matchedProducts.find(p => p._id === product._id)) {
+          
+          if (keywords.some(k => productText.includes(k)) && 
+              !matchedProducts.find(p => p._id === product._id)) {
             matchedProducts.push({ ...product, matchScore: 40 });
           }
         });
       }
     }
   }
-
+  
   // Add event-based matching
   for (const [event, items] of Object.entries(config.eventKeywords)) {
     if (normalizedQuery.includes(event) || normalizedQuery.includes(event.replace('_', ' '))) {
       products.forEach(product => {
         const productText = normalizeText(`${product.title} ${product.description || ''} ${product.category || ''}`);
-
-        if (items.some(item => productText.includes(item.toLowerCase())) &&
-          !matchedProducts.find(p => p._id === product._id)) {
+        
+        if (items.some(item => productText.includes(item.toLowerCase())) && 
+            !matchedProducts.find(p => p._id === product._id)) {
           matchedProducts.push({ ...product, matchScore: 50 });
         }
       });
     }
   }
-
+  
   // Remove duplicates and sort
   const uniqueProducts = Array.from(
     new Map(matchedProducts.map(p => [p._id, p])).values()
   ).sort((a, b) => b.matchScore - a.matchScore);
-
+  
   return uniqueProducts.slice(0, config.maxProducts);
 }
 
@@ -277,7 +276,7 @@ interface UserIntent {
 
 function analyzeUserIntent(query: string): UserIntent {
   const normalizedQuery = normalizeText(query);
-
+  
   const patterns = {
     isViewRequest: /(show|view|see|display|look at|find|search for|what.*do you have|any.*available|browse|explore)/i,
     isBuyRequest: /(buy|purchase|order|checkout|get me|i want to buy|purchasing)/i,
@@ -286,13 +285,13 @@ function analyzeUserIntent(query: string): UserIntent {
     isComparisonRequest: /(compare|vs|versus|difference|better|best|which)/i,
     isPriceQuery: /(price|cost|how much|expensive|cheap|affordable)/i
   };
-
+  
   const intent = Object.fromEntries(
     Object.entries(patterns).map(([key, pattern]) => [
       key, pattern.test(query)
     ])
   ) as Omit<UserIntent, 'extractedProductName' | 'detectedEvent' | 'priceConstraint' | 'priceRange'>;
-
+  
   // Extract product name with improved patterns
   let extractedProductName = '';
   const productPatterns = [
@@ -300,7 +299,7 @@ function analyzeUserIntent(query: string): UserIntent {
     /(?:buy|show|find|need|want|looking for)\s+(?:me\s+)?(?:a|an|some|the)?\s*([a-zA-Z\s-]+?)(?:\s+(?:for|to|that|please)|\?|$)/i,
     /([a-zA-Z\s-]+?)(?:\s+(?:available|in stock|for sale))/i
   ];
-
+  
   for (const pattern of productPatterns) {
     const match = query.match(pattern);
     if (match?.[1]) {
@@ -308,7 +307,7 @@ function analyzeUserIntent(query: string): UserIntent {
       break;
     }
   }
-
+  
   // Event detection
   let detectedEvent: string | null = null;
   for (const event of Object.keys(config.eventKeywords)) {
@@ -317,7 +316,7 @@ function analyzeUserIntent(query: string): UserIntent {
       break;
     }
   }
-
+  
   // Price constraint extraction with better patterns
   let priceConstraint: number | null = null;
   const pricePatterns = [
@@ -325,7 +324,7 @@ function analyzeUserIntent(query: string): UserIntent {
     /(?:budget|afford)\s*(?:of|is)?\s*\$?([0-9,]+)/i,
     /\$([0-9,]+)\s*(?:or less|max|maximum)/i
   ];
-
+  
   for (const pattern of pricePatterns) {
     const match = normalizedQuery.match(pattern);
     if (match?.[1]) {
@@ -333,7 +332,7 @@ function analyzeUserIntent(query: string): UserIntent {
       break;
     }
   }
-
+  
   // Price range detection
   let priceRange: string | null = null;
   for (const [range, _] of Object.entries(config.priceRanges)) {
@@ -342,7 +341,7 @@ function analyzeUserIntent(query: string): UserIntent {
       break;
     }
   }
-
+  
   return {
     ...intent,
     extractedProductName,
@@ -362,7 +361,7 @@ const initializeServices = () => {
   }
 
   return {
-    openai: new OpenAI({
+    openai: new OpenAI({ 
       apiKey: process.env.OPENAI_API_KEY!,
       timeout: 30000 // 30 second timeout
     }),
@@ -424,7 +423,7 @@ async function fetchProducts(connection: mysql.PoolConnection): Promise<Product[
 
   return products.map(p => ({
     ...p,
-    inventory: p.inventory || 0,
+    inventory: p.inventory || 100,
     image_url: p.image_url || undefined,
     category: p.category || undefined,
     rating: p.rating || 0,
@@ -435,30 +434,30 @@ async function fetchProducts(connection: mysql.PoolConnection): Promise<Product[
 // Enhanced confirmation handling
 function checkForConfirmation(history: ChatMessage[], products: Product[]) {
   if (!history || history.length === 0) return null;
-
+  
   const lastMessage = history[history.length - 1];
   if (lastMessage.role !== 'assistant') return null;
-
+  
   // Check for buy confirmation
   const buyMatch = lastMessage.content.match(/Are you sure you want to buy\s+([^<\?]+)\?/i);
   if (buyMatch?.[1]) {
     const productName = buyMatch[1].trim();
-    const product = products.find(p =>
+    const product = products.find(p => 
       p.title.toLowerCase().includes(productName.toLowerCase())
     );
     return { type: 'buy', product };
   }
-
+  
   // Check for cart confirmation
   const cartMatch = lastMessage.content.match(/Are you sure you want to add ([^<\?]+) to your cart\?/i);
   if (cartMatch?.[1]) {
     const productName = cartMatch[1].trim();
-    const product = products.find(p =>
+    const product = products.find(p => 
       p.title.toLowerCase().includes(productName.toLowerCase())
     );
     return { type: 'cart', product };
   }
-
+  
   return null;
 }
 
@@ -491,7 +490,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<AssistantResp
     const confirmation = checkForConfirmation(history || [], products);
     if (confirmation && query.toLowerCase().includes('yes')) {
       const { type, product } = confirmation;
-
+      
       if (!product) {
         return NextResponse.json({
           reply: "Sorry, I couldn't find that product anymore.",
@@ -535,15 +534,15 @@ export async function POST(req: NextRequest): Promise<NextResponse<AssistantResp
 
     // Analyze user intent
     const userIntent = analyzeUserIntent(query);
-
+    
     // Find matching products
     let matchingProducts = findMatchingProducts(query, products);
-
+    
     // Apply filters
     if (userIntent.priceConstraint) {
       matchingProducts = matchingProducts.filter(p => p.price <= userIntent.priceConstraint!);
     }
-
+    
     if (userIntent.priceRange && config.priceRanges[userIntent.priceRange]) {
       const [min, max] = config.priceRanges[userIntent.priceRange];
       matchingProducts = matchingProducts.filter(p => p.price >= min && p.price <= max);
@@ -577,10 +576,10 @@ export async function POST(req: NextRequest): Promise<NextResponse<AssistantResp
     }
 
     // Generate AI response
-    const productList = matchingProducts.length > 0
-      ? matchingProducts.slice(0, 6).map(p =>
-        `ID: ${p._id}\nTitle: ${p.title}\nPrice: $${p.price}\nStock: ${p.inventory}\nDescription: ${p.description || 'No description'}\nCategory: ${p.category || 'General'}\nRating: ${p.rating}/5 (${p.review_count} reviews)\nImage: ${p.image_url || 'No image'}`
-      ).join("\n\n")
+    const productList = matchingProducts.length > 0 
+      ? matchingProducts.slice(0, 6).map(p => 
+          `ID: ${p._id}\nTitle: ${p.title}\nPrice: $${p.price}\nStock: ${p.inventory}\nDescription: ${p.description || 'No description'}\nCategory: ${p.category || 'General'}\nRating: ${p.rating}/5 (${p.review_count} reviews)\nImage: ${p.image_url || 'No image'}`
+        ).join("\n\n")
       : "No products match the specific query.";
 
     const conversationContext = history
@@ -592,38 +591,14 @@ export async function POST(req: NextRequest): Promise<NextResponse<AssistantResp
     if (userIntent.detectedEvent && matchingProducts.length > 0) {
       contextualHint = `\n**EVENT CONTEXT**: Customer mentioned "${userIntent.detectedEvent.replace('_', ' ')}" - highlight products perfect for this occasion.`;
     }
-
+    
     if (userIntent.priceConstraint) {
       contextualHint += `\n**BUDGET**: Customer wants items under $${userIntent.priceConstraint}.`;
     }
 
     const prompt = `You are a helpful, knowledgeable shopping assistant for ${config.storeName}. Be conversational, friendly, and helpful.
 
-1. If the EXACT requested product exists in AVAILABLE PRODUCTS, show it first
-2. If no exact match but similar products exist, say: "We don't have [exact product] but here are similar items:"
-3. If nothing similar exists, say: "I couldn't find [product] in our current inventory. Can I help you with something else?"
-4. Dont suggest products on your own, only from the AVAILABLE PRODUCTS list
-MOST IMPORTANT: NEVER suggest products outside the AVAILABLE PRODUCTS list
-
-
-NEVER DO THIS TYPE OF NONSENSE:
-
-"USER: is there any balloons in store
-YOU: I checked our inventory but don't currently have balloons. However, here are some great alternatives:
-PRODUCT_TITLE
-Alternative Balloons Pack(this product is not in the AVAILABLE PRODUCTS list but you suggested it dont do this type of nonsense)
-Perfect for parties and celebrations"
-
-Respond in this format:
-[if exact match]
-"We have [product name]! [description] [price] [action buttons]"
-
-[if similar products]
-"We don't have [exact request] but you might like these: [list products]"
-
-[if no matches]
-"I couldn't find [product] in stock. Would you like help with something else?"
-
+**STRICT INVENTORY RULE: ONLY recommend products from the "AVAILABLE PRODUCTS" list below. NEVER suggest products not in this list.**
 
 **CUSTOMER QUERY:** "${query}"
 **DETECTED INTENT:** ${Object.entries(userIntent).filter(([_, v]) => v).map(([k, _]) => k).join(', ')}
@@ -636,7 +611,6 @@ ${conversationContext}
 ${productList}
 
 **RESPONSE GUIDELINES:**
-- If user greets you, respond warmly and ask how you can help
 - If products available: Show them with the exact HTML format below
 - If no matches: "I checked our inventory but don't currently have [requested item]. However, here are some great alternatives..." then show related products
 - Be conversational and helpful
@@ -644,22 +618,15 @@ ${productList}
 - Suggest alternatives if original request not available
 
 **EXACT HTML FORMAT:**
-<ul style='list-style:none;'>
-  <li style='background:#fff; padding:16px; border-radius:12px; margin-bottom:16px; box-shadow:0 2px 8px rgba(0,0,0,0.08);'>
-  <img src='IMAGE_URL' loading="lazy" style='width:100%; height:180px; object-fit:cover; border-radius:8px; margin-bottom:12px;' alt='PRODUCT_TITLE'/>
-  <div style='margin-bottom:12px;'>
-    <strong style='font-size:1.1rem; display:block; margin-bottom:4px;'>PRODUCT_TITLE</strong>
-    <span style='color:#666; font-size:0.9rem;'>BRIEF_DESCRIPTION</span>
-  </div>
-  <div style='display:flex; justify-content:space-between; align-items:center;'>
-    <span style='font-weight:600;'>$PRODUCT_PRICE</span>
-    <div>
-      <a href='${config.baseUrl}/product/PRODUCT_SLUG' style='color:#2563EB; text-decoration:none; margin-left:12px; font-weight:500;'>View</a>
-      <a href='${config.baseUrl}/shop/?add-to-cart=PRODUCT_ID' style='color:#2563EB; text-decoration:none; margin-left:12px; font-weight:500;'>Add to Cart</a>
-      <a href='${config.baseUrl}/checkout/?add-to-cart=PRODUCT_ID' style='color:#059669; text-decoration:none; margin-left:12px; font-weight:500;'>Buy</a>
-    </div>
-  </div>
-</li>
+<ul>
+  <li style='background:#f9f9f9; padding:16px; border:1px solid #ddd; border-radius:8px; margin-bottom:12px'>
+    <img src='IMAGE_URL' loading="lazy" style='max-width:100%; height:auto; max-height:150px; margin-bottom:8px; border-radius:4px;' alt='PRODUCT_TITLE'/><br/>
+    <strong>PRODUCT_TITLE</strong> - BRIEF_DESCRIPTION<br/>
+    Price: $PRODUCT_PRICE<br/>
+    <a href='${config.baseUrl}/product/PRODUCT_SLUG' target='_blank' style='background:#2563EB; margin: 8px; color:#fff; padding:6px 12px; border-radius:6px; text-decoration:none; margin-right:8px; display:inline-block;'>View Details</a>
+    <a href='${config.baseUrl}/checkout/?add-to-cart=PRODUCT_ID' target='_blank' style='background:#059669; margin: 8px; color:#fff; padding:6px 12px; border-radius:6px; text-decoration:none; display:inline-block;'>Buy Now</a>
+    <a href='${config.baseUrl}/shop/?add-to-cart=PRODUCT_ID' target='_blank' style='background:#916f10; margin: 8px; color:#fff; padding:6px 12px; border-radius:6px; text-decoration:none; display:inline-block;'>Add to Cart</a>
+  </li>
 </ul>
 
 Remember: ONLY show products from the inventory list!`;
@@ -674,7 +641,7 @@ Remember: ONLY show products from the inventory list!`;
     });
 
     const reply = response.choices[0]?.message?.content || "I'm having trouble generating a response right now. Please try again in a moment.";
-
+    
     // Generate suggestions for follow-up
     const suggestions = matchingProducts.length > 0 ? [
       "Show me more details about this product",
@@ -703,7 +670,7 @@ Remember: ONLY show products from the inventory list!`;
 
   } catch (err) {
     console.error("Shopping Assistant Error:", err);
-
+    
     // More specific error handling
     if (err instanceof z.ZodError) {
       return NextResponse.json(
@@ -714,7 +681,7 @@ Remember: ONLY show products from the inventory list!`;
         { status: 400 }
       );
     }
-
+    
     if (err instanceof Error && err.message.includes('timeout')) {
       return NextResponse.json(
         {
@@ -744,24 +711,25 @@ Remember: ONLY show products from the inventory list!`;
   }
 }
 
+// Health check endpoint (optional)
 export async function GET(): Promise<NextResponse> {
   try {
     const connection = await services.pool.getConnection();
     await connection.ping();
     connection.release();
-
-    return NextResponse.json({
-      status: 'healthy',
+    
+    return NextResponse.json({ 
+      status: 'healthy', 
       timestamp: new Date().toISOString(),
       version: '2.0.0'
     });
   } catch (error) {
     return NextResponse.json(
-      {
-        status: 'unhealthy',
+      { 
+        status: 'unhealthy', 
         error: (error as Error).message,
         timestamp: new Date().toISOString()
-      },
+      }, 
       { status: 503 }
     );
   }
