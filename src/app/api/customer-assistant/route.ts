@@ -164,8 +164,8 @@ function isDirectActionRequest(query: string): { action: 'buy' | 'view' | 'cart'
   }
 
   // View request
-  if (/(view|show me)\s+(.+)/i.test(lowerQuery)) {
-    const match = lowerQuery.match(/(view|show me|see)\s+(.+)/i);
+  if (/(view)\s+(.+)/i.test(lowerQuery)) {
+    const match = lowerQuery.match(/(view)\s+(.+)/i);
     return { action: 'view', productName: match?.[2] || '' };
   }
 
