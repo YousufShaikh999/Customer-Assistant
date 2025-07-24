@@ -344,6 +344,8 @@ function findMatchingProducts(query: string, products: Product[]): Product[] {
 function isVagueProductRequest(query: string): boolean {
   const lowerQuery = query.toLowerCase();
   const vaguePatterns = [
+    /^show me products?$/,
+    /^show me all products?$/,
     /^show me (some )?products?$/,
     /^what products? do you have$/,
     /^(do you )?have any products?$/,
