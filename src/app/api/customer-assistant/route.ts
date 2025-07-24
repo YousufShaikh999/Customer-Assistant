@@ -163,7 +163,7 @@ function isDirectActionRequest(query: string): { action: 'buy' | 'view' | 'cart'
   }
 
   // Vague view requests
-  if (/^(view|show me|see)\s*(it|this|that)?$/i.test(lowerQuery)) {
+  if (/^(view)\s*(it|this|that)?$/i.test(lowerQuery)) {
     return { action: 'view', productName: '', vague: true };
   }
 
