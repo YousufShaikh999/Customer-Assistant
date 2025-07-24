@@ -128,11 +128,18 @@ function detectPhase(query: string, history: ChatMessage[]): 'general' | 'recomm
     'introduction', 'welcome', 'greetings', 'what is your name'
   ];
 
+  // If it's a greeting or very general question  
   if (generalKeywords.some(keyword => lowerQuery.includes(keyword))) {
     return 'general';
   }
 
-  // Everything else goes to recommendation phase which will handle both inquiry and recommendations
+  // If user is looking for products (even vaguely)
+  if (lowerQuery.includes('looking for') || lowerQuery.includes('need') ||
+    lowerQuery.includes('want') || lowerQuery.includes('products')) {
+    return 'recommendation';
+  }
+
+  // Everything else goes to recommendation phase
   return 'recommendation';
 }
 
@@ -413,7 +420,7 @@ You are a friendly customer service assistant for ${config.storeName}.
 
 **STORE INFO:**
 - Store Name: ${config.storeName}
-- We sell various products including furniture, electronics, home decor, party supplies, and more
+- We sell mostly card printers and electronics
 - We help customers find exactly what they need through personalized assistance
 
 Respond naturally and briefly to their query.`;
