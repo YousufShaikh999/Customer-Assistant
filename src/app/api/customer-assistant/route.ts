@@ -598,6 +598,9 @@ export async function POST(req: NextRequest): Promise<NextResponse<AssistantResp
       else if (lowerQuery.includes('what do you sell') || lowerQuery.includes('what products')) {
         reply = `We sell a variety of products including card printers, electronics, and more. What specific type of product are you interested in?`;
       }
+      else if (lowerQuery.includes('what type of products you have') || lowerQuery.includes('what type')) {
+        reply = `We sell a variety of products including card printers, electronics, and more. What specific type of product are you interested in?`;
+      }
       // General help
       else if (lowerQuery.includes('help') || lowerQuery.includes('what can you do')) {
         reply = `I can help you find products, check prices, and answer questions about our inventory. Just tell me what you're looking for!`;
