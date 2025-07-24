@@ -61,6 +61,11 @@ const config: Config = {
 
   // Semantic keyword mapping for better product matching
   semanticKeywords: {
+    // Electronics & Printers
+    'printer': ['printer', 'card printer', 'id printer', 'badge printer', 'printing machine'],
+    'cards': ['card', 'id card', 'badge', 'access card', 'employee card'],
+    'electronics': ['electronic', 'device', 'machine', 'equipment'],
+    
     // Furniture & Home
     'seating': ['chair', 'stool', 'bench', 'sofa', 'couch', 'armchair', 'ottoman'],
     'tables': ['table', 'desk', 'dining table', 'coffee table', 'side table', 'nightstand'],
@@ -79,7 +84,7 @@ const config: Config = {
     'appliances': ['blender', 'mixer', 'toaster', 'microwave', 'oven', 'refrigerator'],
     'utensils': ['spoon', 'fork', 'knife', 'spatula', 'whisk', 'tongs'],
 
-    // Electronics
+    // Audio & Computing
     'audio': ['speaker', 'headphone', 'microphone', 'stereo', 'radio'],
     'computing': ['laptop', 'computer', 'tablet', 'phone', 'monitor', 'keyboard'],
     'gaming': ['console', 'controller', 'game', 'headset'],
@@ -117,26 +122,32 @@ const config: Config = {
   }
 };
 
-// Phase Detection Functions
+// Improved Phase Detection
 function detectPhase(query: string, history: ChatMessage[]): 'general' | 'recommendation' {
   const lowerQuery = query.toLowerCase();
 
-  // Phase 1: General Questions
+  // Greetings and general questions
   const generalKeywords = [
-    'hi', 'hello', 'hey', 'who are you', 'what is this', 'about', 'store',
-    'help', 'what do you sell', 'what products', 'what can you do',
-    'introduction', 'welcome', 'greetings', 'what is your name'
+    'hi', 'hello', 'hey', 'good morning', 'good afternoon', 'good evening',
+    'who are you', 'what is this', 'about', 'help me', 'what can you do',
+    'introduction', 'welcome', 'greetings', 'what is your name',
+    'how are you', 'nice to meet you'
   ];
 
-  // If it's a greeting or very general question  
+  // Store-related general questions
+  const storeGeneralKeywords = [
+    'what do you sell', 'what products do you have', 'tell me about your store',
+    'what kind of store is this', 'what services do you offer'
+  ];
+
+  // Check for exact greetings or general questions
   if (generalKeywords.some(keyword => lowerQuery.includes(keyword))) {
     return 'general';
   }
 
-  // If user is looking for products (even vaguely)
-  if (lowerQuery.includes('looking for') || lowerQuery.includes('need') ||
-    lowerQuery.includes('want') || lowerQuery.includes('products')) {
-    return 'recommendation';
+  // Store general questions that should get quick answers
+  if (storeGeneralKeywords.some(keyword => lowerQuery.includes(keyword))) {
+    return 'general';
   }
 
   // Everything else goes to recommendation phase
@@ -153,8 +164,8 @@ function isDirectActionRequest(query: string): { action: 'buy' | 'view' | 'cart'
   }
 
   // View request
-  if (/(view)\s+(.+)/i.test(lowerQuery)) {
-    const match = lowerQuery.match(/(view|see|show)\s+(.+)/i);
+  if (/(view|show me)\s+(.+)/i.test(lowerQuery)) {
+    const match = lowerQuery.match(/(view|show me|see)\s+(.+)/i);
     return { action: 'view', productName: match?.[2] || '' };
   }
 
@@ -167,69 +178,156 @@ function isDirectActionRequest(query: string): { action: 'buy' | 'view' | 'cart'
   return { action: null, productName: '' };
 }
 
-// Smart product matching function
+// Improved price range detection
+function detectPriceRange(query: string): { min?: number; max?: number } | null {
+  const lowerQuery = query.toLowerCase();
+  
+  // Under/below patterns
+  const underPattern = /(under|below|less than|up to|maximum|max)\s*\$?\s*(\d+(?:\.\d{1,2})?)/i;
+  const underMatch = lowerQuery.match(underPattern);
+
+  // Over/above patterns  
+  const overPattern = /(over|above|more than|greater than|minimum|min)\s*\$?\s*(\d+(?:\.\d{1,2})?)/i;
+  const overMatch = lowerQuery.match(overPattern);
+
+  // Between range patterns
+  const betweenPattern = /between\s*\$?\s*(\d+(?:\.\d{1,2})?)\s*(?:and|to|-)\s*\$?\s*(\d+(?:\.\d{1,2})?)/i;
+  const betweenMatch = lowerQuery.match(betweenPattern);
+
+  // Around/approximately patterns
+  const aroundPattern = /(around|approximately|about)\s*\$?\s*(\d+(?:\.\d{1,2})?)/i;
+  const aroundMatch = lowerQuery.match(aroundPattern);
+
+  if (betweenMatch) {
+    const min = parseFloat(betweenMatch[1]);
+    const max = parseFloat(betweenMatch[2]);
+    return { min: Math.min(min, max), max: Math.max(min, max) };
+  } else if (underMatch) {
+    return { max: parseFloat(underMatch[2]) };
+  } else if (overMatch) {
+    return { min: parseFloat(overMatch[2]) };
+  } else if (aroundMatch) {
+    const price = parseFloat(aroundMatch[2]);
+    return { min: price - 20, max: price + 20 };
+  }
+
+  return null;
+}
+
+// Extract product keywords from query (excluding price-related words)
+function extractProductKeywords(query: string): string[] {
+  const lowerQuery = query.toLowerCase();
+  
+  // Remove price-related phrases
+  const pricePatterns = [
+    /(under|below|less than|up to|maximum|max)\s*\$?\s*\d+(?:\.\d{1,2})?/gi,
+    /(over|above|more than|greater than|minimum|min)\s*\$?\s*\d+(?:\.\d{1,2})?/gi,
+    /between\s*\$?\s*\d+(?:\.\d{1,2})?\s*(?:and|to|-)\s*\$?\s*\d+(?:\.\d{1,2})?/gi,
+    /(around|approximately|about)\s*\$?\s*\d+(?:\.\d{1,2})?/gi,
+    /\$\d+(?:\.\d{1,2})?/gi
+  ];
+  
+  let cleanQuery = lowerQuery;
+  pricePatterns.forEach(pattern => {
+    cleanQuery = cleanQuery.replace(pattern, '');
+  });
+  
+  // Remove common filler words
+  const fillerWords = ['is', 'there', 'any', 'do', 'you', 'have', 'show', 'me', 'some', 'find', 'looking', 'for', 'need', 'want'];
+  const words = cleanQuery.split(/\s+/).filter(word => 
+    word.length > 2 && !fillerWords.includes(word)
+  );
+  
+  return words;
+}
+
+// Smart product matching function with improved price filtering
 function findMatchingProducts(query: string, products: Product[]): Product[] {
   const lowerQuery = query.toLowerCase();
+  const priceRange = detectPriceRange(query);
+  const productKeywords = extractProductKeywords(query);
+
+  console.log('Query:', query);
+  console.log('Price range detected:', priceRange);
+  console.log('Product keywords:', productKeywords);
+
+  // Step 1: Filter by price if specified
+  let filteredProducts = products;
+  if (priceRange) {
+    filteredProducts = products.filter(product => {
+      const price = product.price;
+      if (priceRange.min !== undefined && priceRange.max !== undefined) {
+        return price >= priceRange.min && price <= priceRange.max;
+      } else if (priceRange.min !== undefined) {
+        return price > priceRange.min;
+      } else if (priceRange.max !== undefined) {
+        return price <= priceRange.max;
+      }
+      return true;
+    });
+
+    console.log(`Found ${filteredProducts.length} products matching price range`);
+  }
+
+  // Step 2: If no product keywords, return price-filtered results
+  if (productKeywords.length === 0) {
+    return filteredProducts.sort((a, b) => a.price - b.price).slice(0, 6);
+  }
+
+  // Step 3: Apply product keyword matching on price-filtered results
   const scoredProducts: Array<{ product: Product; score: number }> = [];
-  const queryWords = lowerQuery.split(/\s+/);
 
-  // 1. Direct title/description matching (highest priority)
-  products.forEach(product => {
+  filteredProducts.forEach(product => {
     const productText = `${product.title} ${product.description || ''} ${product.category || ''}`.toLowerCase();
+    let score = 0;
 
-    // Exact phrase match
-    if (productText.includes(lowerQuery)) {
-      scoredProducts.push({ product, score: 100 });
-      return;
+    // Direct keyword matching
+    productKeywords.forEach(keyword => {
+      if (productText.includes(keyword)) {
+        score += 20;
+      }
+    });
+
+    // Semantic matching
+    for (const [category, keywords] of Object.entries(config.semanticKeywords)) {
+      const hasQueryKeyword = productKeywords.some(qkw => keywords.includes(qkw));
+      const hasProductKeyword = keywords.some(keyword => productText.includes(keyword));
+      
+      if (hasQueryKeyword && hasProductKeyword) {
+        score += 15;
+      }
     }
 
-    // Word matching
-    const matchingWords = queryWords.filter(word =>
-      word.length > 2 && productText.includes(word)
-    );
+    // Exact phrase matching (highest score)
+    const queryPhrase = productKeywords.join(' ');
+    if (productText.includes(queryPhrase)) {
+      score += 50;
+    }
 
-    if (matchingWords.length > 0) {
-      const score = (matchingWords.length / queryWords.length) * 80;
-      if (score > 30) {
-        scoredProducts.push({ product, score });
-      }
+    if (score > 0) {
+      scoredProducts.push({ product, score });
     }
   });
 
-  // 2. Semantic keyword matching
-  for (const [category, keywords] of Object.entries(config.semanticKeywords)) {
-    for (const keyword of keywords) {
-      if (lowerQuery.includes(keyword)) {
-        products.forEach(product => {
-          const productText = `${product.title} ${product.description || ''} ${product.category || ''}`.toLowerCase();
-          const categoryMatches = keywords.some(k => productText.includes(k));
-          if (categoryMatches && !scoredProducts.find(p => p.product._id === product._id)) {
-            scoredProducts.push({ product, score: 60 });
-          }
-        });
-      }
-    }
-  }
+  // Sort by score and return top results
+  return scoredProducts
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 6)
+    .map(p => p.product);
+}
 
-  // 3. Event-based matching
-  for (const [event, items] of Object.entries(config.eventKeywords)) {
-    if (lowerQuery.includes(event) || lowerQuery.includes(event.replace('_', ' '))) {
-      products.forEach(product => {
-        const productText = `${product.title} ${product.description || ''} ${product.category || ''}`.toLowerCase();
-        const itemMatches = items.some(item => productText.includes(item.toLowerCase()));
-        if (itemMatches && !scoredProducts.find(p => p.product._id === product._id)) {
-          scoredProducts.push({ product, score: 70 });
-        }
-      });
-    }
-  }
-
-  // Remove duplicates and sort by score
-  const uniqueProducts = Array.from(
-    new Map(scoredProducts.map(p => [p.product._id, p])).values()
-  ).sort((a, b) => b.score - a.score);
-
-  return uniqueProducts.slice(0, 6).map(p => p.product);
+// Check if query is asking to "show products" without specifics
+function isVagueProductRequest(query: string): boolean {
+  const lowerQuery = query.toLowerCase();
+  const vaguePatterns = [
+    /^show me (some )?products?$/,
+    /^what products? do you have$/,
+    /^(do you )?have any products?$/,
+    /^show me what you have$/,
+    /^what do you sell$/
+  ];
+  
+  return vaguePatterns.some(pattern => pattern.test(lowerQuery.trim()));
 }
 
 // Initialize services
@@ -295,6 +393,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<AssistantResp
       WHERE p.post_type = 'product'
         AND p.post_status = 'publish'
         AND pm_price.meta_value IS NOT NULL
+        AND pm_price.meta_value != ''
       GROUP BY p.ID, p.post_title, pm_price.meta_value, p.post_content, p.post_name, pm_thumb_img.guid
     `);
 
@@ -404,35 +503,27 @@ export async function POST(req: NextRequest): Promise<NextResponse<AssistantResp
     // Detect current phase
     const currentPhase = detectPhase(query, history || []);
 
-    // PHASE 1: GENERAL QUESTIONS
+    // PHASE 1: GENERAL QUESTIONS - Quick responses
     if (currentPhase === 'general') {
-      const generalPrompt = `
-You are a friendly customer service assistant for ${config.storeName}. 
+      const lowerQuery = query.toLowerCase();
+      let reply = '';
 
-**INSTRUCTIONS:**
-- Keep responses SHORT and FRIENDLY (1-2 sentences max)
-- Answer general questions about the store quickly
-- If asked about products, mention you can help them find what they need
-- Be welcoming and helpful
-- Don't list specific products yet
-
-**CUSTOMER QUERY:** "${query}"
-
-**STORE INFO:**
-- Store Name: ${config.storeName}
-- We sell mostly card printers and electronics
-- We help customers find exactly what they need through personalized assistance
-
-Respond naturally and briefly to their query.`;
-
-      const res = await services.openai.chat.completions.create({
-        model: config.generalAiModel,
-        messages: [{ role: "user", content: generalPrompt }],
-        temperature: 0.3,
-        max_tokens: 150
-      });
-
-      const reply = res.choices[0]?.message?.content || "Hello! I'm here to help you find what you need.";
+      // Greetings
+      if (lowerQuery.includes('hello') || lowerQuery.includes('hi') || lowerQuery.includes('hey')) {
+        reply = `Hello! Welcome to ${config.storeName}. I'm here to help you find the perfect products. What are you looking for today?`;
+      }
+      // About store
+      else if (lowerQuery.includes('what do you sell') || lowerQuery.includes('what products')) {
+        reply = `We sell a variety of products including card printers, electronics, and more. What specific type of product are you interested in?`;
+      }
+      // General help
+      else if (lowerQuery.includes('help') || lowerQuery.includes('what can you do')) {
+        reply = `I can help you find products, check prices, and answer questions about our inventory. Just tell me what you're looking for!`;
+      }
+      // Default general response
+      else {
+        reply = `Hi there! I'm your shopping assistant at ${config.storeName}. I can help you find products, compare prices, and answer any questions. What can I help you find today?`;
+      }
 
       return NextResponse.json({
         reply,
@@ -442,6 +533,19 @@ Respond naturally and briefly to their query.`;
           { role: 'assistant', content: reply }
         ],
         phase: 'general'
+      });
+    }
+
+    // Handle vague product requests
+    if (isVagueProductRequest(query)) {
+      return NextResponse.json({
+        reply: "I'd be happy to help you find what you need! Could you tell me what type of product you're looking for? For example: electronics, printers, furniture, or anything specific you have in mind?",
+        history: [
+          ...(history || []),
+          { role: 'user', content: query },
+          { role: 'assistant', content: "I'd be happy to help you find what you need! Could you tell me what type of product you're looking for? For example: electronics, printers, furniture, or anything specific you have in mind?" }
+        ],
+        phase: 'recommendation'
       });
     }
 
@@ -483,84 +587,75 @@ Respond naturally and briefly to their query.`;
       });
     }
 
-    // PHASE 2: PRODUCT RECOMMENDATION (combined with inquiry)
+    // PHASE 2: PRODUCT RECOMMENDATION
     const matchingProducts = findMatchingProducts(query, mappedProducts);
-    const conversationContext = history
-      ?.slice(-config.maxHistoryLength)
-      ?.map(msg => `${msg.role === 'user' ? 'Customer' : 'Assistant'}: ${msg.content}`)
-      ?.join('\n') || "No previous conversation";
+    const priceRange = detectPriceRange(query);
+    const productKeywords = extractProductKeywords(query);
 
-    const productList = matchingProducts.length > 0
-      ? matchingProducts.map(p =>
-        `ID: ${p._id}\nTitle: ${p.title}\nPrice: $${p.price}\nDescription: ${p.description}\nCategory: ${p.category || 'General'}\nImage: ${p.image_url || 'No image'}\nSlug: ${p.slug}`
-      ).join("\n\n")
-      : "No matching products found";
+    // Handle the case where no products match
+    if (matchingProducts.length === 0) {
+      let reply = '';
+      
+      if (priceRange && productKeywords.length > 0) {
+        // User asked for specific product with price range
+        const priceText = priceRange.max ? `under $${priceRange.max}` : `over $${priceRange.min}`;
+        reply = `Sorry, we don't have any ${productKeywords.join(' ')} ${priceText}. Would you like to see similar products in a different price range?`;
+      } else if (priceRange) {
+        // User asked only for price range
+        const priceText = priceRange.max ? `under $${priceRange.max}` : `over $${priceRange.min}`;
+        reply = `Sorry, we don't have any products ${priceText}. Our products start from a different price range. Would you like to see what's available?`;
+      } else {
+        // User asked for specific product without price
+        reply = `Sorry, we don't have "${productKeywords.join(' ')}" in our current inventory. Could you try describing what you need differently, or would you like to see similar products?`;
+      }
 
-    const recommendationPrompt = `
-You are a helpful shopping assistant for ${config.storeName}. Your goal is to have a natural conversation while helping customers find products.
+      return NextResponse.json({
+        reply,
+        history: [
+          ...(history || []),
+          { role: 'user', content: query },
+          { role: 'assistant', content: reply }
+        ],
+        phase: 'recommendation'
+      });
+    }
 
-**IMPORTANT RULES:**
-1. Be conversational and friendly
-2. If the query is unclear, ask ONE clarifying question at a time
-3. If products match, show them in the HTML format below
-4. If no products match, apologize and ask if they'd like alternatives
-5. For product questions, answer accurately based on the product details
-6. Maintain context from previous messages in the conversation
+    // Create response with matching products
+    let reply = '';
+    
+    if (priceRange && productKeywords.length > 0) {
+      // User asked for specific product with price range
+      const priceText = priceRange.max ? `under $${priceRange.max}` : `over $${priceRange.min}`;
+      reply = `Yes! Here are the ${productKeywords.join(' ')} products we have ${priceText}:\n\n`;
+    } else if (priceRange) {
+      // User asked only for price range
+      const priceText = priceRange.max ? `under $${priceRange.max}` : `over $${priceRange.min}`;
+      reply = `Yes! Here are our products ${priceText}:\n\n`;
+    } else {
+      // User asked for specific product without price
+      reply = `Great! Here are the ${productKeywords.join(' ')} products we have:\n\n`;
+    }
 
-**CUSTOMER QUERY:** "${query}"
-
-**CONVERSATION HISTORY:**
-${conversationContext}
-
-**AVAILABLE PRODUCTS:**
-${productList}
-
-**RESPONSE GUIDELINES:**
-${matchingProducts.length > 0 ? `
-- Show matching products using the HTML format below
-- Briefly explain why these products might be relevant
-- Keep the tone friendly and helpful
-- If multiple products match, show the top 3 most relevant
-` : `
-- Apologize that we don't have exactly what they're looking for
-- Ask if they'd like to see alternatives or describe what they need differently
-- If they mentioned an event (birthday, wedding etc.), suggest related items
-`}
-
-**HTML FORMAT (use exactly this for each product):**
+    // Add product HTML
+    const productHTML = matchingProducts.map(product => `
 <ul>
   <li style='background:#f9f9f9; padding:16px; border:1px solid #ddd; border-radius:8px; margin-bottom:12px'>
-    <img src='IMAGE_URL' loading="lazy" style='max-width:100%; height:auto; max-height:150px; margin-bottom:8px; border-radius:4px;' alt='PRODUCT_TITLE'/><br/>
-    <strong>PRODUCT_TITLE</strong> - BRIEF_DESCRIPTION<br/>
-    Price: $PRODUCT_PRICE<br/>
-    <a href='${config.baseUrl}/product/PRODUCT_SLUG' target='_blank' style='background:#2563EB; margin: 8px; color:#fff; padding:6px 12px; border-radius:6px; text-decoration:none; margin-right:8px; display:inline-block;'>View Product</a>
-    <a href='${config.baseUrl}/checkout/?add-to-cart=PRODUCT_ID' target='_blank' style='background:#059669; margin: 8px; color:#fff; padding:6px 12px; border-radius:6px; text-decoration:none; display:inline-block;'>Buy Now</a>
-    <a href='${config.baseUrl}/shop/?add-to-cart=PRODUCT_ID' target='_blank' style='background:#916f10; margin: 8px; color:#fff; padding:6px 12px; border-radius:6px; text-decoration:none; display:inline-block;'>Add to Cart</a>
+    <img src='${product.image_url || ''}' loading="lazy" style='max-width:100%; height:auto; max-height:150px; margin-bottom:8px; border-radius:4px;' alt='${product.title}'/><br/>
+    <strong>${product.title}</strong><br/>
+    ${product.description ? product.description.substring(0, 100) + '...' : 'Quality product'}<br/>
+    <strong>Price: $${product.price}</strong><br/>
+    <a href='${config.baseUrl}/product/${product.slug}' target='_blank' style='background:#2563EB; margin: 8px; color:#fff; padding:6px 12px; border-radius:6px; text-decoration:none; margin-right:8px; display:inline-block;'>View Product</a>
+    <a href='${config.baseUrl}/checkout/?add-to-cart=${product._id}' target='_blank' style='background:#059669; margin: 8px; color:#fff; padding:6px 12px; border-radius:6px; text-decoration:none; display:inline-block;'>Buy Now</a>
+    <a href='${config.baseUrl}/shop/?add-to-cart=${product._id}' target='_blank' style='background:#916f10; margin: 8px; color:#fff; padding:6px 12px; border-radius:6px; text-decoration:none; display:inline-block;'>Add to Cart</a>
   </li>
-</ul>
+</ul>`).join('');
 
-**EXAMPLES:**
-- If customer asks "Do you have blue chairs?" and we have matches:
-  "Yes! Here are some blue chairs we have in stock: [HTML product list]"
+    reply += productHTML;
 
-- If customer asks "Do you have blue chairs?" and we don't have matches:
-  "We don't have blue chairs currently, but we have these similar options: [HTML product list] 
-   Or would you like me to suggest something different?"
-
-- If customer asks vaguely "I need something for my living room":
-  "What type of items are you looking for? Furniture, decor, lighting? And do you have any style preferences?"
-
-- If customer asks about product details:
-  "The [Product Name] features [accurate details from description]. Would you like to see more options?"`;
-
-    const res = await services.openai.chat.completions.create({
-      model: config.recommendationAiModel,
-      messages: [{ role: "user", content: recommendationPrompt }],
-      temperature: 0.7,
-      max_tokens: 1500
-    });
-
-    const reply = res.choices[0]?.message?.content || "I'd be happy to help you find what you need.";
+    // Add helpful closing message
+    if (matchingProducts.length > 0) {
+      reply += `\n\nNeed help choosing or have questions about any of these products? Just ask!`;
+    }
 
     return NextResponse.json({
       reply,
