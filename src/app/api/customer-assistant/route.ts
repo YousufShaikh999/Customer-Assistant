@@ -182,7 +182,7 @@ function isDirectActionRequest(query: string): { action: 'buy' | 'view' | 'cart'
   }
 
   // Specific view requests
-  if (/(view|show me)\s+(.+)/i.test(lowerQuery)) {
+  if (/(view)\s+(.+)/i.test(lowerQuery)) {
     const match = lowerQuery.match(/(view|show me|see)\s+(.+)/i);
     const productName = match?.[2] || '';
     if (!['it', 'this', 'that'].includes(productName.trim())) {
