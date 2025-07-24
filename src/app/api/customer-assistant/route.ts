@@ -154,28 +154,52 @@ function detectPhase(query: string, history: ChatMessage[]): 'general' | 'recomm
   return 'recommendation';
 }
 
-function isDirectActionRequest(query: string): { action: 'buy' | 'view' | 'cart' | null; productName: string } {
-  const lowerQuery = query.toLowerCase();
+function isDirectActionRequest(query: string): { action: 'buy' | 'view' | 'cart' | null; productName: string; vague: boolean } {
+  const lowerQuery = query.toLowerCase().trim();
 
-  // Buy request
+  // Vague buy requests (without product name)
+  if (/^(buy|purchase)\s*(it|this|that)?$/i.test(lowerQuery)) {
+    return { action: 'buy', productName: '', vague: true };
+  }
+
+  // Vague view requests
+  if (/^(view|show me|see)\s*(it|this|that)?$/i.test(lowerQuery)) {
+    return { action: 'view', productName: '', vague: true };
+  }
+
+  // Vague cart requests
+  if (/^(add to cart|cart)\s*(it|this|that)?$/i.test(lowerQuery)) {
+    return { action: 'cart', productName: '', vague: true };
+  }
+
+  // Specific buy requests (with product name)
   if (/(buy|purchase)\s+(.+)/i.test(lowerQuery)) {
     const match = lowerQuery.match(/(buy|purchase)\s+(.+)/i);
-    return { action: 'buy', productName: match?.[2] || '' };
+    const productName = match?.[2] || '';
+    if (!['it', 'this', 'that'].includes(productName.trim())) {
+      return { action: 'buy', productName, vague: false };
+    }
   }
 
-  // View request
-  if (/(view)\s+(.+)/i.test(lowerQuery)) {
-    const match = lowerQuery.match(/(view)\s+(.+)/i);
-    return { action: 'view', productName: match?.[2] || '' };
+  // Specific view requests
+  if (/(view|show me)\s+(.+)/i.test(lowerQuery)) {
+    const match = lowerQuery.match(/(view|show me|see)\s+(.+)/i);
+    const productName = match?.[2] || '';
+    if (!['it', 'this', 'that'].includes(productName.trim())) {
+      return { action: 'view', productName, vague: false };
+    }
   }
 
-  // Add to cart request
+  // Specific cart requests
   if (/(add to cart|cart)\s+(.+)/i.test(lowerQuery)) {
     const match = lowerQuery.match(/(add to cart|cart)\s+(.+)/i);
-    return { action: 'cart', productName: match?.[2] || '' };
+    const productName = match?.[2] || '';
+    if (!['it', 'this', 'that'].includes(productName.trim())) {
+      return { action: 'cart', productName, vague: false };
+    }
   }
 
-  return { action: null, productName: '' };
+  return { action: null, productName: '', vague: false };
 }
 
 // Improved price range detection
@@ -416,8 +440,10 @@ export async function POST(req: NextRequest): Promise<NextResponse<AssistantResp
     // Handle confirmation responses for direct actions
     const directAction = isDirectActionRequest(query);
 
-    // Check for pending confirmations
+    // Check for pending confirmations and actions
     let pendingConfirmation = null;
+    let pendingAction = null;
+    
     if (history && history.length > 0) {
       const lastMessage = history[history.length - 1].content;
 
@@ -438,10 +464,64 @@ export async function POST(req: NextRequest): Promise<NextResponse<AssistantResp
       if (cartMatch) {
         pendingConfirmation = { type: 'cart', product: cartMatch[1].trim() };
       }
+
+      // Pending action (waiting for product name)
+      const buyActionMatch = lastMessage.match(/What would you like to buy\?/i);
+      if (buyActionMatch) {
+        pendingAction = { type: 'buy' };
+      }
+
+      const viewActionMatch = lastMessage.match(/What would you like to view\?/i);
+      if (viewActionMatch) {
+        pendingAction = { type: 'view' };
+      }
+
+      const cartActionMatch = lastMessage.match(/What would you like to add to cart\?/i);
+      if (cartActionMatch) {
+        pendingAction = { type: 'cart' };
+      }
+    }
+
+    // Handle pending actions (user provided product name after vague request)
+    if (pendingAction && !pendingConfirmation) {
+      const matchingProducts = findMatchingProducts(query, mappedProducts);
+      
+      if (matchingProducts.length === 0) {
+        return NextResponse.json({
+          reply: `Sorry, I couldn't find "${query}". Could you try a different product name or be more specific?`,
+          history: [
+            ...(history || []),
+            { role: 'user', content: query },
+            { role: 'assistant', content: `Sorry, I couldn't find "${query}". Could you try a different product name or be more specific?` }
+          ],
+          phase: 'recommendation'
+        });
+      }
+
+      const product = matchingProducts[0];
+      let confirmationMessage = '';
+
+      if (pendingAction.type === 'buy') {
+        confirmationMessage = `Are you sure you want to buy ${product.title}?`;
+      } else if (pendingAction.type === 'view') {
+        confirmationMessage = `Are you sure you want to view ${product.title}?`;
+      } else if (pendingAction.type === 'cart') {
+        confirmationMessage = `Are you sure you want to add ${product.title} to your cart?`;
+      }
+
+      return NextResponse.json({
+        reply: confirmationMessage,
+        history: [
+          ...(history || []),
+          { role: 'user', content: query },
+          { role: 'assistant', content: confirmationMessage }
+        ],
+        phase: 'recommendation'
+      });
     }
 
     // Handle confirmation responses
-    if (pendingConfirmation && query.toLowerCase().includes('yes')) {
+    if (pendingConfirmation && (query.toLowerCase().includes('yes') || query.toLowerCase().includes('yeah') || query.toLowerCase().includes('sure') || query.toLowerCase().includes('ok'))) {
       const product = mappedProducts.find(p =>
         p.title.toLowerCase().includes(pendingConfirmation.product.toLowerCase())
       );
@@ -539,52 +619,77 @@ export async function POST(req: NextRequest): Promise<NextResponse<AssistantResp
     // Handle vague product requests
     if (isVagueProductRequest(query)) {
       return NextResponse.json({
-        reply: "I'd be happy to help you find what you need! Could you tell me what type of product you're looking for? For example: electronics, printers, furniture, or anything specific you have in mind?",
+        reply: "I'd be happy to help you find what you need! Could you tell me what type of product you're looking for? For example: electronics, printers, or anything specific you have in mind?",
         history: [
           ...(history || []),
           { role: 'user', content: query },
-          { role: 'assistant', content: "I'd be happy to help you find what you need! Could you tell me what type of product you're looking for? For example: electronics, printers, furniture, or anything specific you have in mind?" }
+          { role: 'assistant', content: "I'd be happy to help you find what you need! Could you tell me what type of product you're looking for? For example: electronics, printers, or anything specific you have in mind?" }
         ],
         phase: 'recommendation'
       });
     }
 
-    // Handle direct action requests with confirmation
-    if (directAction.action && directAction.productName) {
-      const matchingProducts = findMatchingProducts(directAction.productName, mappedProducts);
+    // Handle direct action requests
+    if (directAction.action) {
+      // Vague requests (no product name)
+      if (directAction.vague) {
+        let reply = '';
+        if (directAction.action === 'buy') {
+          reply = 'What would you like to buy?';
+        } else if (directAction.action === 'view') {
+          reply = 'What would you like to view?';
+        } else if (directAction.action === 'cart') {
+          reply = 'What would you like to add to cart?';
+        }
 
-      if (matchingProducts.length === 0) {
         return NextResponse.json({
-          reply: `I'm sorry, we don't currently have "${directAction.productName}" in our inventory. Is there anything else I can help you find?`,
+          reply,
           history: [
             ...(history || []),
             { role: 'user', content: query },
-            { role: 'assistant', content: `I'm sorry, we don't currently have "${directAction.productName}" in our inventory. Is there anything else I can help you find?` }
+            { role: 'assistant', content: reply }
           ],
           phase: 'recommendation'
         });
       }
+      
+      // Specific requests (with product name)
+      if (directAction.productName) {
+        const matchingProducts = findMatchingProducts(directAction.productName, mappedProducts);
 
-      const product = matchingProducts[0];
-      let confirmationMessage = '';
+        if (matchingProducts.length === 0) {
+          return NextResponse.json({
+            reply: `I'm sorry, we don't currently have "${directAction.productName}" in our inventory. Is there anything else I can help you find?`,
+            history: [
+              ...(history || []),
+              { role: 'user', content: query },
+              { role: 'assistant', content: `I'm sorry, we don't currently have "${directAction.productName}" in our inventory. Is there anything else I can help you find?` }
+            ],
+            phase: 'recommendation'
+          });
+        }
 
-      if (directAction.action === 'buy') {
-        confirmationMessage = `Are you sure you want to buy ${product.title}?`;
-      } else if (directAction.action === 'view') {
-        confirmationMessage = `Are you sure you want to view ${product.title}?`;
-      } else if (directAction.action === 'cart') {
-        confirmationMessage = `Are you sure you want to add ${product.title} to your cart?`;
+        const product = matchingProducts[0];
+        let confirmationMessage = '';
+
+        if (directAction.action === 'buy') {
+          confirmationMessage = `Are you sure you want to buy ${product.title}?`;
+        } else if (directAction.action === 'view') {
+          confirmationMessage = `Are you sure you want to view ${product.title}?`;
+        } else if (directAction.action === 'cart') {
+          confirmationMessage = `Are you sure you want to add ${product.title} to your cart?`;
+        }
+
+        return NextResponse.json({
+          reply: confirmationMessage,
+          history: [
+            ...(history || []),
+            { role: 'user', content: query },
+            { role: 'assistant', content: confirmationMessage }
+          ],
+          phase: 'recommendation'
+        });
       }
-
-      return NextResponse.json({
-        reply: confirmationMessage,
-        history: [
-          ...(history || []),
-          { role: 'user', content: query },
-          { role: 'assistant', content: confirmationMessage }
-        ],
-        phase: 'recommendation'
-      });
     }
 
     // PHASE 2: PRODUCT RECOMMENDATION
@@ -638,16 +743,18 @@ export async function POST(req: NextRequest): Promise<NextResponse<AssistantResp
 
     // Add product HTML
     const productHTML = matchingProducts.map(product => `
-<ul>
-  <li style='background:#f9f9f9; padding:16px; border:1px solid #ddd; border-radius:8px; margin-bottom:12px'>
-    <img src='${product.image_url || ''}' loading="lazy" style='max-width:100%; height:auto; max-height:150px; margin-bottom:8px; border-radius:4px;' alt='${product.title}'/><br/>
-    <strong>${product.title}</strong><br/>
-    ${product.description ? product.description.substring(0, 100) + '...' : 'Quality product'}<br/>
-    <strong>Price: $${product.price}</strong><br/>
-    <a href='${config.baseUrl}/product/${product.slug}' target='_blank' style='background:#2563EB; margin: 8px; color:#fff; padding:6px 12px; border-radius:6px; text-decoration:none; margin-right:8px; display:inline-block;'>View Product</a>
-    <a href='${config.baseUrl}/checkout/?add-to-cart=${product._id}' target='_blank' style='background:#059669; margin: 8px; color:#fff; padding:6px 12px; border-radius:6px; text-decoration:none; display:inline-block;'>Buy Now</a>
-    <a href='${config.baseUrl}/shop/?add-to-cart=${product._id}' target='_blank' style='background:#916f10; margin: 8px; color:#fff; padding:6px 12px; border-radius:6px; text-decoration:none; display:inline-block;'>Add to Cart</a>
-  </li>
+<ul style='list-style:none;'>
+  <li style='background:#fff; padding:16px; border:1px solid #eee; border-radius:12px; margin-bottom:16px; box-shadow:0 2px 8px rgba(0,0,0,0.05); transition:transform 0.2s;'>
+  <img src='${product.image_url || ''}' loading="lazy" style='width:100%; height:180px; object-fit:cover; border-radius:8px; margin-bottom:12px;' alt='${product.title}'/>
+  <strong style='display:block; font-size:16px; margin-bottom:6px;'>${product.title}</strong>
+  <p style='color:#666; font-size:14px; margin-bottom:12px;'>${product.description ? product.description.substring(0, 80) + (product.description.length > 80 ? '...' : '') : 'Premium quality product'}</p>
+  <strong style='display:block; font-size:18px; margin-bottom:12px;'>$${product.price}</strong>
+  <div style='display:flex; gap:8px; flex-wrap:wrap;'>
+    <a href='${config.baseUrl}/product/${product.slug}' style='background:#f8fafc; color:#2563EB; padding:8px 12px; border-radius:6px; text-decoration:none; border:1px solid #e2e8f0; font-size:14px;'>View</a>
+    <a href='${config.baseUrl}/checkout/?add-to-cart=${product._id}' style='background:#2563EB; color:#fff; padding:8px 12px; border-radius:6px; text-decoration:none; font-size:14px;'>Buy Now</a>
+    <a href='${config.baseUrl}/shop/?add-to-cart=${product._id}' style='background:#059669; color:#fff; padding:8px 12px; border-radius:6px; text-decoration:none; font-size:14px;'>Add to Cart</a>
+  </div>
+</li>
 </ul>`).join('');
 
     reply += productHTML;
