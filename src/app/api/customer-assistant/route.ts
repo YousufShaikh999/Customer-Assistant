@@ -343,9 +343,7 @@ function detectPhase(query: string, history: ChatMessage[], context: Conversatio
 
   // Recommendation keywords without product names
   const recommendationKeywords = [
-    'recommend', 'suggest', 'show me', 'what do you have',
-    'products', 'items', 'looking for', 'options', 'choices',
-    'offer', 'available', 'have any', 'provide'
+    'recommend', 'suggest', 'show me', 'looking for', 'options', 'have any',
   ];
 
   if (recommendationKeywords.some(keyword => lowerQuery.includes(keyword))) {
