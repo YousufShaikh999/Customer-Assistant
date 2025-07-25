@@ -31,6 +31,7 @@ interface AssistantResponse {
   history?: ChatMessage[];
   error?: string;
   phase?: 'general' | 'recommendation';
+  lastShownProducts?: Product[]; // Track products shown to user
 }
 
 const requestSchema = z.object({
@@ -38,10 +39,20 @@ const requestSchema = z.object({
   history: z.array(z.object({
     role: z.enum(['user', 'assistant']),
     content: z.string()
-  })).optional()
+  })).optional(),
+  lastShownProducts: z.array(z.object({
+    _id: z.string(),
+    title: z.string(),
+    price: z.number(),
+    inventory: z.number(),
+    description: z.string(),
+    slug: z.any(),
+    category: z.string().optional(),
+    image_url: z.string().optional()
+  })).optional() // Accept last shown products from frontend
 });
 
-// Configuration
+// Enhanced Configuration
 interface Config {
   maxHistoryLength: number;
   generalAiModel: "gpt-3.5-turbo";
@@ -50,6 +61,10 @@ interface Config {
   storeName: string;
   semanticKeywords: Record<string, string[]>;
   eventKeywords: Record<string, string[]>;
+  fallbackResponses: string[];
+  nonsenseResponses: string[];
+  timeoutMs: number;
+  clarifyingQuestions: string[];
 }
 
 const config: Config = {
@@ -58,6 +73,14 @@ const config: Config = {
   recommendationAiModel: "gpt-3.5-turbo",
   baseUrl: "http://plugin.ijkstaging.com",
   storeName: process.env.STORE_NAME || "Plugin Store",
+  timeoutMs: 5000, // 5 second timeout for responses
+
+  clarifyingQuestions: [
+    "What type of products are you interested in? We have {categories}.",
+    "Could you tell me more about what you're looking for? For example, are you interested in {sample_products}?",
+    "I'd be happy to help you find products. What category are you interested in? We have {categories}.",
+    "What specifically are you looking for today? We offer products like {sample_products}."
+  ],
 
   // Semantic keyword mapping for better product matching
   semanticKeywords: {
@@ -65,7 +88,7 @@ const config: Config = {
     'printer': ['printer', 'card printer', 'id printer', 'badge printer', 'printing machine'],
     'cards': ['card', 'id card', 'badge', 'access card', 'employee card'],
     'electronics': ['electronic', 'device', 'machine', 'equipment'],
-    
+
     // Furniture & Home
     'seating': ['chair', 'stool', 'bench', 'sofa', 'couch', 'armchair', 'ottoman'],
     'tables': ['table', 'desk', 'dining table', 'coffee table', 'side table', 'nightstand'],
@@ -119,25 +142,193 @@ const config: Config = {
     'new_year': ['light', 'decoration', 'balloon', 'confetti', 'party supplies', 'champagne glass'],
     'easter': ['decoration', 'basket', 'egg', 'bunny', 'spring decoration', 'flower'],
     'housewarming': ['plant', 'candle', 'decoration', 'furniture', 'home decor', 'kitchen items']
-  }
+  },
+
+  // Fallback responses for when we don't understand
+  fallbackResponses: [
+    "I'm not quite sure I understand. Could you rephrase that or tell me more about what you're looking for?",
+    "I want to help you with that. Could you provide more details about what you need?",
+    "I'm still learning! Could you try asking that in a different way?",
+    "Let me connect you with a human agent who can better assist with that request.",
+    "I'm not certain about that. Would you like me to show you our available products instead?",
+    "That's an interesting question! Could you clarify what you're looking for?",
+    "I might need more context to help with that. What specifically are you interested in?",
+    "I'm here to help with product questions. Could you tell me what you're shopping for today?"
+  ],
+
+  // Responses for nonsense queries
+  nonsenseResponses: [
+    "I'm here to help with your shopping needs! What products are you interested in today?",
+    "Let me know how I can assist with finding products in our store!",
+    "I'd be happy to help you find what you're looking for in our store.",
+    "Looking for something specific? I can help you find it!",
+    "I'm your shopping assistant. How can I help with your purchase today?",
+    "Let's focus on finding you the perfect product. What are you shopping for?",
+    "I'm here to help with your shopping questions. What can I assist you with today?"
+  ]
 };
 
-// Improved Phase Detection
-function detectPhase(query: string, history: ChatMessage[]): 'general' | 'recommendation' {
-  const lowerQuery = query.toLowerCase();
+interface ConversationContext {
+  pendingPurchase?: {
+    productId: string;
+    productTitle: string;
+    productPrice: number;
+    productSlug: string;
+  };
+  pendingAction?: 'buy' | 'view' | 'cart';
+  lastRecommendedProducts?: Product[];
+  lastShownProducts?: Product[]; // Track products shown in last response
+}
+
+// Improved context extraction from history with better purchase detection
+function extractContextFromHistory(history: ChatMessage[], lastShownProducts?: Product[]): ConversationContext {
+  const context: ConversationContext = {
+    lastShownProducts: lastShownProducts || []
+  };
+
+  if (!history || history.length < 2) {
+    return context;
+  }
+
+  // Look at the last assistant message for pending purchase confirmation
+  const lastAssistantMessage = history[history.length - 1];
+
+  if (lastAssistantMessage.role === 'assistant') {
+    // Better purchase confirmation pattern matching
+    const purchaseMatch = lastAssistantMessage.content.match(
+      /Would you like to proceed with purchasing (.+?) for (.+?)\?/i
+    );
+
+    if (purchaseMatch) {
+      const productTitle = purchaseMatch[1].trim();
+      const priceText = purchaseMatch[2].trim();
+      const productPrice = parseFloat(priceText.replace(/[\$,]/g, ''));
+
+      // Try to find the product in lastShownProducts to get the correct ID and slug
+      const matchingProduct = lastShownProducts?.find(p => p.title === productTitle);
+
+      context.pendingPurchase = {
+        productId: matchingProduct?._id || '',
+        productTitle,
+        productPrice,
+        productSlug: matchingProduct?.slug || ''
+      };
+      context.pendingAction = 'buy';
+    }
+
+    // Check for view confirmation pattern
+    const viewMatch = lastAssistantMessage.content.match(
+      /Would you like to view details for (.+?)\?/i
+    );
+    if (viewMatch) {
+      context.pendingAction = 'view';
+    }
+
+    // Check for cart confirmation pattern
+    const cartMatch = lastAssistantMessage.content.match(
+      /Would you like to add (.+?) \((.+?)\) to your cart\?/i
+    );
+    if (cartMatch) {
+      context.pendingAction = 'cart';
+    }
+  }
+
+  return context;
+}
+
+// Enhanced confirmation response detection
+function isConfirmationResponse(query: string): 'yes' | 'no' | null {
+  const lowerQuery = query.toLowerCase().trim();
+
+  // Positive confirmations
+  const yesPatterns = [
+    /^yes$/i,
+    /^yeah$/i,
+    /^yep$/i,
+    /^sure$/i,
+    /^ok$/i,
+    /^okay$/i,
+    /^y$/i,
+    /^proceed$/i,
+    /^go ahead$/i,
+    /^continue$/i,
+    /^confirm$/i,
+    /^yes please$/i,
+    /^yes,? proceed$/i,
+    /^yes,? continue$/i,
+    /^absolutely$/i,
+    /^definitely$/i,
+    /^of course$/i,
+    /^do it$/i,
+    /^let's do it$/i,
+    /^let's go$/i
+  ];
+
+  // Negative confirmations
+  const noPatterns = [
+    /^no$/i,
+    /^nope$/i,
+    /^nah$/i,
+    /^cancel$/i,
+    /^stop$/i,
+    /^abort$/i,
+    /^n$/i,
+    /^no thanks$/i,
+    /^not now$/i,
+    /^maybe later$/i,
+    /^not really$/i,
+    /^don't$/i,
+    /^skip$/i,
+    /^never mind$/i,
+    /^forget it$/i
+  ];
+
+  if (yesPatterns.some(pattern => pattern.test(lowerQuery))) {
+    return 'yes';
+  }
+
+  if (noPatterns.some(pattern => pattern.test(lowerQuery))) {
+    return 'no';
+  }
+
+  return null;
+}
+
+// Enhanced Phase Detection - prioritize confirmation responses
+function detectPhase(query: string, history: ChatMessage[], context: ConversationContext): 'general' | 'recommendation' {
+  const lowerQuery = query.toLowerCase().trim();
+
+  // If we have a pending action and this looks like a confirmation, 
+  // we should stay in recommendation phase to handle it properly
+  if (context.pendingAction && isConfirmationResponse(query)) {
+    return 'recommendation';
+  }
+
+  // Check for empty or nonsense queries
+  if (!lowerQuery || lowerQuery.length < 2 || isNonsenseQuery(lowerQuery)) {
+    return 'general';
+  }
+
+  // Check for comparison queries FIRST before other patterns
+  if (isComparisonQuery(query)) {
+    return 'recommendation';
+  }
 
   // Greetings and general questions
   const generalKeywords = [
     'hi', 'hello', 'hey', 'good morning', 'good afternoon', 'good evening',
     'who are you', 'what is this', 'about', 'help me', 'what can you do',
     'introduction', 'welcome', 'greetings', 'what is your name',
-    'how are you', 'nice to meet you'
+    'how are you', 'nice to meet you', 'thank you', 'thanks', 'bye',
+    'goodbye', 'help', 'support', 'contact', 'speak to human'
   ];
 
   // Store-related general questions
   const storeGeneralKeywords = [
     'what do you sell', 'what products do you have', 'tell me about your store',
-    'what kind of store is this', 'what services do you offer'
+    'what kind of store is this', 'what services do you offer', 'hours',
+    'open', 'close', 'location', 'where are you', 'policy', 'return',
+    'shipping', 'delivery', 'payment', 'price match', 'discount'
   ];
 
   // Check for exact greetings or general questions
@@ -150,81 +341,192 @@ function detectPhase(query: string, history: ChatMessage[]): 'general' | 'recomm
     return 'general';
   }
 
-  // Everything else goes to recommendation phase
-  return 'recommendation';
+  // Recommendation keywords without product names
+  const recommendationKeywords = [
+    'recommend', 'suggest', 'show me', 'what do you have',
+    'products', 'items', 'looking for', 'options', 'choices',
+    'offer', 'available', 'have any', 'provide'
+  ];
+
+  if (recommendationKeywords.some(keyword => lowerQuery.includes(keyword))) {
+    return 'recommendation';
+  }
+
+
+  // Check if it's a recommendation keyword without a product name
+  const isRecommendationWithoutProduct = recommendationKeywords.some(keyword =>
+    lowerQuery.includes(keyword) &&
+    !extractProductKeywords(query).length
+  );
+
+  if (isRecommendationWithoutProduct) {
+    return 'recommendation';
+    
+  }
+
+  // If it's just a product name, stay in general phase
+  const productKeywords = extractProductKeywords(query);
+  if (productKeywords.length > 0 && !isRecommendationQuery(query)) {
+    return 'general';
+  }
+
+  // Everything else goes to general phase by default
+  return 'general';
 }
 
-function isDirectActionRequest(query: string): { action: 'buy' | 'view' | 'cart' | null; productName: string; vague: boolean } {
+
+// Detect nonsense queries (random characters, repeated letters, etc.)
+function isNonsenseQuery(query: string): boolean {
+  // Check for repeated characters (like "aaaaaa")
+  if (/([a-zA-Z])\1{4,}/.test(query)) return true;
+
+  // Check for random character strings without vowels
+  if (!/[aeiouyAEIOUY]/.test(query) && query.length > 6) return true;
+
+  // Check for queries that are too short to be meaningful
+  if (query.split(/\s+/).length === 1 && query.length < 3) return true;
+
+  // Check for queries that are just numbers
+  if (/^\d+$/.test(query)) return true;
+
+  return false;
+}
+
+function findBestProductMatch(productName: string, products: Product[]): Product | null {
+  const lowerProductName = productName.toLowerCase();
+
+  // First try exact title match
+  let bestMatch = products.find(p =>
+    p.title.toLowerCase().includes(lowerProductName) ||
+    lowerProductName.includes(p.title.toLowerCase())
+  );
+
+  if (bestMatch) return bestMatch;
+
+  // Try partial word matching
+  const productWords = lowerProductName.split(/\s+/).filter(word => word.length > 2);
+
+  const scoredProducts: Array<{ product: Product; score: number }> = [];
+
+  products.forEach(product => {
+    const productText = `${product.title} ${product.description || ''}`.toLowerCase();
+    let score = 0;
+
+    productWords.forEach(word => {
+      if (productText.includes(word)) {
+        score += word.length; // Longer words get higher scores
+      }
+    });
+
+    if (score > 0) {
+      scoredProducts.push({ product, score });
+    }
+  });
+
+  // Return the highest scoring match
+  if (scoredProducts.length > 0) {
+    scoredProducts.sort((a, b) => b.score - a.score);
+    return scoredProducts[0].product;
+  }
+
+  return null;
+}
+
+function generateClarifyingQuestion(products: Product[]): string {
+  // Extract unique categories
+  const categories = [...new Set(products
+    .map(p => p.category)
+    .filter(Boolean)
+    .flatMap(c => c?.split(', ') || [])
+  )];
+
+  // Get some sample product names
+  const sampleProducts = [...products]
+    .sort(() => 0.5 - Math.random())
+    .slice(0, 3)
+    .map(p => p.title);
+
+  // Select a random question template
+  const template = config.clarifyingQuestions[
+    Math.floor(Math.random() * config.clarifyingQuestions.length)
+  ];
+
+  // Replace placeholders
+  return template
+    .replace('{categories}', categories.slice(0, 3).join(', ') + (categories.length > 3 ? ' and more' : ''))
+    .replace('{sample_products}', sampleProducts.join(', '));
+}
+
+// Enhanced direct action detection
+function isDirectActionRequest(query: string, products: Product[]): {
+  action: 'buy' | 'view' | 'cart' | null;
+  productName: string;
+  vague: boolean;
+  product?: Product;
+} {
   const lowerQuery = query.toLowerCase().trim();
 
   // Vague buy requests (without product name)
-  if (/^(buy|purchase)\s*(it|this|that)?$/i.test(lowerQuery)) {
+  if (/^(buy|purchase|get|order)\s*(it|this|that|one|something)?$/i.test(lowerQuery)) {
     return { action: 'buy', productName: '', vague: true };
   }
 
   // Vague view requests
-  if (/^(view)\s*(it|this|that)?$/i.test(lowerQuery)) {
+  if (/^(view)$/i.test(lowerQuery)) {
     return { action: 'view', productName: '', vague: true };
   }
 
   // Vague cart requests
-  if (/^(add to cart|cart)\s*(it|this|that)?$/i.test(lowerQuery)) {
+  if (/^(add to cart|cart|add|put in cart)\s*(it|this|that|one)?$/i.test(lowerQuery)) {
     return { action: 'cart', productName: '', vague: true };
   }
 
   // Specific buy requests (with product name)
-  if (/(buy|purchase)\s+(.+)/i.test(lowerQuery)) {
-    const match = lowerQuery.match(/(buy|purchase)\s+(.+)/i);
+  if (/(buy|purchase|get|order)\s+(.+)/i.test(lowerQuery)) {
+    const match = lowerQuery.match(/(buy|purchase|get|order)\s+(.+)/i);
     const productName = match?.[2] || '';
-    if (!['it', 'this', 'that'].includes(productName.trim())) {
-      return { action: 'buy', productName, vague: false };
+    if (!['it', 'this', 'that', 'one'].includes(productName.trim().toLowerCase())) {
+      const matchingProducts = findMatchingProducts(productName, products);
+      return {
+        action: 'buy',
+        productName,
+        vague: false,
+        product: matchingProducts[0] || undefined
+      };
     }
   }
 
-  // Specific view requests
-  if (/(view)\s+(.+)/i.test(lowerQuery)) {
-    const match = lowerQuery.match(/(view|show me|see)\s+(.+)/i);
-    const productName = match?.[2] || '';
-    if (!['it', 'this', 'that'].includes(productName.trim())) {
-      return { action: 'view', productName, vague: false };
-    }
-  }
-
-  // Specific cart requests
-  if (/(add to cart|cart)\s+(.+)/i.test(lowerQuery)) {
-    const match = lowerQuery.match(/(add to cart|cart)\s+(.+)/i);
-    const productName = match?.[2] || '';
-    if (!['it', 'this', 'that'].includes(productName.trim())) {
-      return { action: 'cart', productName, vague: false };
-    }
-  }
-
+  // Similar for view and cart...
   return { action: null, productName: '', vague: false };
 }
 
 // Improved price range detection
 function detectPriceRange(query: string): { min?: number; max?: number } | null {
   const lowerQuery = query.toLowerCase();
-  
+
   // Under/below patterns
-  const underPattern = /(under|below|less than|up to|maximum|max)\s*\$?\s*(\d+(?:\.\d{1,2})?)/i;
+  const underPattern = /(under|below|less than|up to|maximum|max|cheaper than)\s*\$?\s*(\d+(?:\.\d{1,2})?)/i;
   const underMatch = lowerQuery.match(underPattern);
 
   // Over/above patterns  
-  const overPattern = /(over|above|more than|greater than|minimum|min)\s*\$?\s*(\d+(?:\.\d{1,2})?)/i;
+  const overPattern = /(over|above|more than|greater than|minimum|min|at least|expensive than)\s*\$?\s*(\d+(?:\.\d{1,2})?)/i;
   const overMatch = lowerQuery.match(overPattern);
 
   // Between range patterns
-  const betweenPattern = /between\s*\$?\s*(\d+(?:\.\d{1,2})?)\s*(?:and|to|-)\s*\$?\s*(\d+(?:\.\d{1,2})?)/i;
+  const betweenPattern = /(between|from)\s*\$?\s*(\d+(?:\.\d{1,2})?)\s*(?:and|to|-|and up to)\s*\$?\s*(\d+(?:\.\d{1,2})?)/i;
   const betweenMatch = lowerQuery.match(betweenPattern);
 
   // Around/approximately patterns
-  const aroundPattern = /(around|approximately|about)\s*\$?\s*(\d+(?:\.\d{1,2})?)/i;
+  const aroundPattern = /(around|approximately|about|near|close to)\s*\$?\s*(\d+(?:\.\d{1,2})?)/i;
   const aroundMatch = lowerQuery.match(aroundPattern);
 
+  // Exact price
+  const exactPattern = /(\$?\s*\d+(?:\.\d{1,2})?)\s*(exactly|precisely)/i;
+  const exactMatch = lowerQuery.match(exactPattern);
+
   if (betweenMatch) {
-    const min = parseFloat(betweenMatch[1]);
-    const max = parseFloat(betweenMatch[2]);
+    const min = parseFloat(betweenMatch[2]);
+    const max = parseFloat(betweenMatch[3]);
     return { min: Math.min(min, max), max: Math.max(min, max) };
   } else if (underMatch) {
     return { max: parseFloat(underMatch[2]) };
@@ -232,7 +534,52 @@ function detectPriceRange(query: string): { min?: number; max?: number } | null 
     return { min: parseFloat(overMatch[2]) };
   } else if (aroundMatch) {
     const price = parseFloat(aroundMatch[2]);
-    return { min: price - 20, max: price + 20 };
+    return { min: price * 0.8, max: price * 1.2 }; // 20% range around the price
+  } else if (exactMatch) {
+    const price = parseFloat(exactMatch[1].replace('$', ''));
+    return { min: price * 0.95, max: price * 1.05 }; // Tight 5% range for exact matches
+  }
+
+  return null;
+}
+
+// Enhanced comparison detection
+function isComparisonQuery(query: string): { product1: string; product2: string } | null {
+  const lowerQuery = query.toLowerCase();
+
+  // Enhanced patterns for comparison questions - more flexible matching
+  const patterns = [
+    // "difference between X and Y"
+    /(?:what(?:'s| is| are)? (?:the )?)?difference(?:s)? between (?:a )?(.+?) and (?:a )?(.+?)(?:\?|$)/i,
+
+    // "compare X and Y" or "comparison between X and Y"
+    /(?:compare|comparison)(?: between)? (?:a )?(.+?) (?:and|vs\.?|versus) (?:a )?(.+?)(?:\?|$)/i,
+
+    // "X vs Y" or "X versus Y"
+    /(.+?) (?:vs\.?|versus) (.+?)(?:\?|$)/i,
+
+    // "which is better X or Y"
+    /(?:which is better|which one is better|what's better)(?: between)? (?:a )?(.+?) (?:or|vs\.?|versus) (?:a )?(.+?)(?:\?|$)/i,
+
+    // "should i get X or Y"
+    /(?:should i get|should i buy|would you recommend)(?: a)? (.+?) (?:or|vs\.?|versus) (?:a )?(.+?)(?:\?|$)/i,
+
+    // More flexible pattern for any comparison structure
+    /(?:what(?:'s| is)?|tell me) (?:about )?(?:the )?(?:difference|comparison) (?:of |between )?(?:a )?(.+?) (?:and|or|vs\.?|versus) (?:a )?(.+?)(?:\?|$)/i
+  ];
+
+  for (const pattern of patterns) {
+    const match = lowerQuery.match(pattern);
+    if (match && match[1] && match[2]) {
+      // Clean up the product names
+      const product1 = match[1].trim().replace(/^(a |an |the )/i, '');
+      const product2 = match[2].trim().replace(/^(a |an |the )/i, '');
+
+      // Make sure both products have meaningful names
+      if (product1.length > 1 && product2.length > 1) {
+        return { product1, product2 };
+      }
+    }
   }
 
   return null;
@@ -241,7 +588,7 @@ function detectPriceRange(query: string): { min?: number; max?: number } | null 
 // Extract product keywords from query (excluding price-related words)
 function extractProductKeywords(query: string): string[] {
   const lowerQuery = query.toLowerCase();
-  
+
   // Remove price-related phrases
   const pricePatterns = [
     /(under|below|less than|up to|maximum|max)\s*\$?\s*\d+(?:\.\d{1,2})?/gi,
@@ -250,18 +597,26 @@ function extractProductKeywords(query: string): string[] {
     /(around|approximately|about)\s*\$?\s*\d+(?:\.\d{1,2})?/gi,
     /\$\d+(?:\.\d{1,2})?/gi
   ];
-  
+
   let cleanQuery = lowerQuery;
   pricePatterns.forEach(pattern => {
     cleanQuery = cleanQuery.replace(pattern, '');
   });
-  
-  // Remove common filler words
-  const fillerWords = ['is', 'there', 'any', 'do', 'you', 'have', 'show', 'me', 'some', 'find', 'looking', 'for', 'need', 'want'];
-  const words = cleanQuery.split(/\s+/).filter(word => 
-    word.length > 2 && !fillerWords.includes(word)
-  );
-  
+
+  // Remove common filler words and question words
+  const fillerWords = [
+    'is', 'there', 'any', 'do', 'you', 'have', 'show', 'me', 'some', 'find',
+    'looking', 'for', 'need', 'want', 'what', 'where', 'when', 'how', 'why',
+    'can', 'could', 'would', 'should', 'does', 'did', 'are', 'am', 'the', 'a',
+    'an', 'that', 'this', 'those', 'these', 'please', 'thank', 'thanks', 'hi',
+    'hello', 'hey', 'greetings', 'about', 'with', 'without', 'like', 'similar',
+    'to', 'from', 'of', 'in', 'on', 'at', 'by', 'for', 'and', 'or', 'but'
+  ];
+
+  const words = cleanQuery.split(/\s+/)
+    .filter(word => word.length > 2 && !fillerWords.includes(word))
+    .filter((word, index, self) => self.indexOf(word) === index); // Remove duplicates
+
   return words;
 }
 
@@ -270,10 +625,6 @@ function findMatchingProducts(query: string, products: Product[]): Product[] {
   const lowerQuery = query.toLowerCase();
   const priceRange = detectPriceRange(query);
   const productKeywords = extractProductKeywords(query);
-
-  console.log('Query:', query);
-  console.log('Price range detected:', priceRange);
-  console.log('Product keywords:', productKeywords);
 
   // Step 1: Filter by price if specified
   let filteredProducts = products;
@@ -289,13 +640,20 @@ function findMatchingProducts(query: string, products: Product[]): Product[] {
       }
       return true;
     });
-
-    console.log(`Found ${filteredProducts.length} products matching price range`);
   }
 
-  // Step 2: If no product keywords, return price-filtered results
+  // Step 2: If no product keywords, return price-filtered results or random products
   if (productKeywords.length === 0) {
-    return filteredProducts.sort((a, b) => a.price - b.price).slice(0, 6);
+    if (filteredProducts.length > 0) {
+      // Return price-filtered results if we have them
+      return filteredProducts
+        .sort((a, b) => a.price - b.price)
+        .slice(0, 6);
+    }
+    // Otherwise return random products
+    return [...products]
+      .sort(() => 0.5 - Math.random())
+      .slice(0, 6);
   }
 
   // Step 3: Apply product keyword matching on price-filtered results
@@ -316,7 +674,7 @@ function findMatchingProducts(query: string, products: Product[]): Product[] {
     for (const [category, keywords] of Object.entries(config.semanticKeywords)) {
       const hasQueryKeyword = productKeywords.some(qkw => keywords.includes(qkw));
       const hasProductKeyword = keywords.some(keyword => productText.includes(keyword));
-      
+
       if (hasQueryKeyword && hasProductKeyword) {
         score += 15;
       }
@@ -326,6 +684,16 @@ function findMatchingProducts(query: string, products: Product[]): Product[] {
     const queryPhrase = productKeywords.join(' ');
     if (productText.includes(queryPhrase)) {
       score += 50;
+    }
+
+    // Boost score if product is in stock
+    if (product.inventory > 0) {
+      score += 10;
+    }
+
+    // Boost score if product has an image
+    if (product.image_url) {
+      score += 5;
     }
 
     if (score > 0) {
@@ -347,16 +715,25 @@ function isVagueProductRequest(query: string): boolean {
     /^show me products?$/,
     /^show me all products?$/,
     /^show me (some )?products?$/,
+    /^i want to buy some products?$/,
+    /^i want to buy products?$/,
     /^what products? do you have$/,
     /^(do you )?have any products?$/,
     /^show me what you have$/,
-    /^what do you sell$/
+    /^what do you sell$/,
+    /^what's available$/,
+    /^what do you offer$/,
+    /^list products$/,
+    /^show items$/,
+    /^show inventory$/,
+    /^what can i buy$/,
+    /^what's in stock$/
   ];
-  
+
   return vaguePatterns.some(pattern => pattern.test(lowerQuery.trim()));
 }
 
-// Initialize services
+// Initialize services with timeout protection
 const initializeServices = () => {
   const requiredEnvVars = ['OPENAI_API_KEY', 'WP_DB_HOST', 'WP_DB_USER', 'WP_DB_PASSWORD', 'WP_DB_NAME'];
   const missingVars = requiredEnvVars.filter(varName => !process.env[varName]);
@@ -366,7 +743,10 @@ const initializeServices = () => {
   }
 
   return {
-    openai: new OpenAI({ apiKey: process.env.OPENAI_API_KEY! }),
+    openai: new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY!,
+      timeout: config.timeoutMs
+    }),
     pool: mysql.createPool({
       host: process.env.WP_DB_HOST,
       user: process.env.WP_DB_USER,
@@ -374,7 +754,8 @@ const initializeServices = () => {
       database: process.env.WP_DB_NAME,
       waitForConnections: true,
       connectionLimit: 10,
-      queueLimit: 0
+      queueLimit: 0,
+      connectTimeout: config.timeoutMs
     })
   };
 };
@@ -388,40 +769,258 @@ try {
   throw initError;
 }
 
+// Helper function to generate quick response without AI when possible
+async function generateQuickResponse(query: string, products: Product[]): Promise<string | null> {
+  const lowerQuery = query.toLowerCase().trim();
+
+  // Greetings
+  if (/^(hi|hello|hey|greetings|good (morning|afternoon|evening))/.test(lowerQuery)) {
+    return `Hello! Welcome to ${config.storeName}. How can I assist you today?`;
+  }
+
+  // Thanks
+  if (/^(thanks|thank you|appreciate it|cheers)/.test(lowerQuery)) {
+    return "You're welcome! Is there anything else I can help you with?";
+  }
+
+  // Goodbye
+  if (/^(bye|goodbye|see you|farewell)/.test(lowerQuery)) {
+    return "Goodbye! Feel free to come back if you need any more assistance.";
+  }
+
+  // Store information
+  if (/^(what do you sell|what products do you have|what kind of store is this)/.test(lowerQuery)) {
+    const categories = [...new Set(products.map(p => p.category).filter(Boolean))];
+    const categoryList = categories.length > 0
+      ? `We offer ${categories.slice(0, 3).join(', ')}${categories.length > 3 ? ' and more' : ''}.`
+      : 'We offer a variety of products.';
+    return `${categoryList} What specifically are you looking for today?`;
+  }
+
+  // Help request
+  if (/^(help|what can you do|how does this work)/.test(lowerQuery)) {
+    return "I can help you find products, check prices, and answer questions about our inventory. Just tell me what you're looking for!";
+  }
+
+  // About the assistant
+  if (/^(who are you|what are you|what's your name)/.test(lowerQuery)) {
+    return `I'm your shopping assistant at ${config.storeName}, here to help you find the perfect products!`;
+  }
+  if (/^(i want to buy|i want to purchase)/.test(lowerQuery)) {
+    return `I'm here to help you buy products! What are you looking to purchase?`;
+  }
+
+  return null;
+}
+
+async function generateComparisonResponse(product1: Product, product2: Product, openai: OpenAI) {
+  // You can enhance this logic as needed
+  const prompt = `Compare the following two products:\n\nProduct 1: ${product1.title} - ${product1.description}\n\nProduct 2: ${product2.title} - ${product2.description}\n\nHighlight the main differences, pros, and cons.`;
+  const completion = await openai.chat.completions.create({
+    model: "gpt-3.5-turbo",
+    messages: [{ role: "user", content: prompt }],
+    max_tokens: 300,
+    temperature: 0.7,
+  });
+  return completion.choices[0]?.message?.content?.trim() || "No comparison available.";
+}
+
+// New function to handle general questions with AI
+async function handleGeneralQuestion(query: string, history: ChatMessage[] = []): Promise<string> {
+  try {
+    // Create a prompt that provides context to the AI
+    const prompt = `You are a helpful shopping assistant for store named Plugin. 
+    The user has asked: "${query}". 
+    -Plugin is a store that mostly sells card printers, projectors, customer services and electronics.
+    -Please provide a helpful response to this general question. 
+    -Keep your response concise and friendly, and focus on being helpful to the shopper.
+    -If you don't know the answer, suggest they rephrase or ask for more details.
+    -If query is not about greeting, you, store, products, or shopping, politely decline to answer.
+    -If they use abusive language, respond with a friendly reminder to keep the conversation respectful.
+    `;
+
+    const completion = await services.openai.chat.completions.create({
+      model: config.generalAiModel,
+      messages: [
+        { role: "system", content: "You are a helpful shopping assistant." },
+        ...(history || []),
+        { role: "user", content: prompt }
+      ],
+      max_tokens: 200,
+      temperature: 0.7,
+    });
+
+    return completion.choices[0]?.message?.content?.trim() ||
+      "I'm not sure how to answer that. Could you rephrase your question?";
+  } catch (error) {
+    console.error("AI General Question Error:", error);
+    return config.fallbackResponses[
+      Math.floor(Math.random() * config.fallbackResponses.length)
+    ];
+  }
+}
+
+function isRecommendationQuery(query: string): boolean {
+  const recommendationKeywords = [
+    'recommend', 'suggest', 'show me', 'what do you have',
+    'products', 'items', 'looking for', 'options', 'choices',
+    'offer', 'available', 'have any', 'provide'
+  ];
+  return recommendationKeywords.some(keyword =>
+    query.toLowerCase().includes(keyword.toLowerCase())
+  );
+}
+
+// Main API endpoint with proper confirmation handling
 export async function POST(req: NextRequest): Promise<NextResponse<AssistantResponse>> {
   let connection: mysql.PoolConnection | null = null;
 
   try {
     const body = await req.json();
-    const { query, history } = requestSchema.parse(body);
+    const { query, history, lastShownProducts } = requestSchema.parse(body);
 
-    // Get database connection
-    connection = await services.pool.getConnection();
+    // Ensure lastShownProducts conforms to Product[] (slug required)
+    const normalizedProducts: Product[] | undefined = lastShownProducts?.map(p => ({
+      ...p,
+      slug: String(p.slug ?? "")
+    }));
 
-    // Fetch products
-    const [products] = await connection.query<any[]>(`
-      SELECT 
-        p.ID AS _id,
-        p.post_title AS title,
-        CAST(pm_price.meta_value AS DECIMAL(10,2)) AS price,
-        100 AS inventory,
-        p.post_content AS description,
-        p.post_name AS slug,
-        pm_thumb_img.guid AS image_url,
-        GROUP_CONCAT(DISTINCT t.name SEPARATOR ', ') AS category
-      FROM wp_posts p
-      LEFT JOIN wp_postmeta pm_price ON p.ID = pm_price.post_id AND pm_price.meta_key = '_price'
-      LEFT JOIN wp_postmeta pm_thumb ON p.ID = pm_thumb.post_id AND pm_thumb.meta_key = '_thumbnail_id'
-      LEFT JOIN wp_posts pm_thumb_img ON pm_thumb.meta_value = pm_thumb_img.ID
-      LEFT JOIN wp_term_relationships tr ON p.ID = tr.object_id
-      LEFT JOIN wp_term_taxonomy tt ON tr.term_taxonomy_id = tt.term_taxonomy_id AND tt.taxonomy = 'product_cat'
-      LEFT JOIN wp_terms t ON tt.term_id = t.term_id
-      WHERE p.post_type = 'product'
-        AND p.post_status = 'publish'
-        AND pm_price.meta_value IS NOT NULL
-        AND pm_price.meta_value != ''
-      GROUP BY p.ID, p.post_title, pm_price.meta_value, p.post_content, p.post_name, pm_thumb_img.guid
-    `);
+    const context = extractContextFromHistory(history || [], normalizedProducts);
+
+    console.log('Context:', context);
+    console.log('User query:', query);
+    console.log('Last shown products:', normalizedProducts?.map(p => p.title));
+
+    // Handle confirmation responses FIRST, before any other logic
+    const confirmation = isConfirmationResponse(query);
+    console.log('Confirmation:', confirmation);
+
+    // Handle all confirmation cases (yes/no) first
+    if (confirmation !== null && context.pendingPurchase) {
+      console.log('Handling confirmation for pending purchase');
+      if (confirmation === 'yes') {
+        // User confirmed purchase - redirect to checkout
+        if (!context.pendingPurchase.productId) {
+          return NextResponse.json({
+            reply: "I'm sorry, there was an issue processing your purchase. Please try again.",
+            history: [
+              ...(history || []),
+              { role: 'user', content: query },
+              { role: 'assistant', content: "There was an issue processing your purchase." }
+            ],
+            phase: 'recommendation'
+          });
+        }
+
+        const checkoutUrl = `${config.baseUrl}/checkout/?add-to-cart=${context.pendingPurchase.productId}`;
+        return NextResponse.json({
+          reply: `Great! Redirecting you to complete your purchase of ${context.pendingPurchase.productTitle}...`,
+          redirect: checkoutUrl,
+          history: [
+            ...(history || []),
+            { role: 'user', content: query },
+            { role: 'assistant', content: `Redirecting you to purchase ${context.pendingPurchase.productTitle}` }
+          ],
+          phase: 'recommendation'
+        });
+      } else {
+        // User declined purchase
+        return NextResponse.json({
+          reply: "No problem! Let me know if there's anything else I can help you with or if you'd like to see other products.",
+          history: [
+            ...(history || []),
+            { role: 'user', content: query },
+            { role: 'assistant', content: "No problem! Let me know if there's anything else I can help you with." }
+          ],
+          phase: 'recommendation'
+        });
+      }
+    }
+
+    // Handle other confirmation responses (view, cart actions)
+    if (confirmation !== null && context.pendingAction) {
+      console.log('Handling confirmation for pending action');
+      if (confirmation === 'yes') {
+        let responseMessage = "I'd be happy to help with that!";
+        if (context.pendingAction === 'view') {
+          responseMessage = "Great! Please let me know which specific product you'd like to view details for.";
+        } else if (context.pendingAction === 'cart') {
+          responseMessage = "Perfect! Please specify which product you'd like to add to your cart.";
+        }
+
+        return NextResponse.json({
+          reply: responseMessage,
+          history: [
+            ...(history || []),
+            { role: 'user', content: query },
+            { role: 'assistant', content: responseMessage }
+          ],
+          phase: 'recommendation'
+        });
+      } else {
+        return NextResponse.json({
+          reply: "No problem! How else can I assist you today?",
+          history: [
+            ...(history || []),
+            { role: 'user', content: query },
+            { role: 'assistant', content: "No problem! How else can I assist you today?" }
+          ],
+          phase: 'recommendation'
+        });
+      }
+    }
+
+    // Try quick response for common queries
+    const quickResponse = await generateQuickResponse(query, []);
+    if (quickResponse) {
+      return NextResponse.json({
+        reply: quickResponse,
+        history: [
+          ...(history || []),
+          { role: 'user', content: query },
+          { role: 'assistant', content: quickResponse }
+        ],
+        phase: 'general'
+      });
+    }
+
+    // Get database connection with timeout
+    connection = await Promise.race([
+      services.pool.getConnection(),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Database connection timeout')), config.timeoutMs)
+      )
+    ]);
+
+    // Fetch products with timeout protection
+    const [products] = await Promise.race([
+      connection.query<any[]>(`
+        SELECT 
+          p.ID AS _id,
+          p.post_title AS title,
+          CAST(pm_price.meta_value AS DECIMAL(10,2)) AS price,
+          100 AS inventory,
+          p.post_content AS description,
+          COALESCE(p.post_name, '') AS slug,
+          pm_thumb_img.guid AS image_url,
+          GROUP_CONCAT(DISTINCT t.name SEPARATOR ', ') AS category
+        FROM wp_posts p
+        LEFT JOIN wp_postmeta pm_price ON p.ID = pm_price.post_id AND pm_price.meta_key = '_price'
+        LEFT JOIN wp_postmeta pm_thumb ON p.ID = pm_thumb.post_id AND pm_thumb.meta_key = '_thumbnail_id'
+        LEFT JOIN wp_posts pm_thumb_img ON pm_thumb.meta_value = pm_thumb_img.ID
+        LEFT JOIN wp_term_relationships tr ON p.ID = tr.object_id
+        LEFT JOIN wp_term_taxonomy tt ON tr.term_taxonomy_id = tt.term_taxonomy_id AND tt.taxonomy = 'product_cat'
+        LEFT JOIN wp_terms t ON tt.term_id = t.term_id
+        WHERE p.post_type = 'product'
+          AND p.post_status = 'publish'
+          AND pm_price.meta_value IS NOT NULL
+          AND pm_price.meta_value != ''
+        GROUP BY p.ID, p.post_title, pm_price.meta_value, p.post_content, p.post_name, pm_thumb_img.guid
+      `),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Database query timeout')), config.timeoutMs)
+      )
+    ]);
 
     if (!products.length) {
       return NextResponse.json({
@@ -439,183 +1038,52 @@ export async function POST(req: NextRequest): Promise<NextResponse<AssistantResp
       category: p.category || undefined
     }));
 
-    // Handle confirmation responses for direct actions
-    const directAction = isDirectActionRequest(query);
-
-    // Check for pending confirmations and actions
-    let pendingConfirmation = null;
-    let pendingAction = null;
-    
-    if (history && history.length > 0) {
-      const lastMessage = history[history.length - 1].content;
-
-      // Buy confirmation
-      const buyMatch = lastMessage.match(/Are you sure you want to buy\s+([^?]+)\?/i);
-      if (buyMatch) {
-        pendingConfirmation = { type: 'buy', product: buyMatch[1].trim() };
-      }
-
-      // View confirmation
-      const viewMatch = lastMessage.match(/Are you sure you want to view\s+([^?]+)\?/i);
-      if (viewMatch) {
-        pendingConfirmation = { type: 'view', product: viewMatch[1].trim() };
-      }
-
-      // Cart confirmation
-      const cartMatch = lastMessage.match(/Are you sure you want to add\s+([^?]+)\s+to your cart\?/i);
-      if (cartMatch) {
-        pendingConfirmation = { type: 'cart', product: cartMatch[1].trim() };
-      }
-
-      // Pending action (waiting for product name)
-      const buyActionMatch = lastMessage.match(/What would you like to buy\?/i);
-      if (buyActionMatch) {
-        pendingAction = { type: 'buy' };
-      }
-
-      const viewActionMatch = lastMessage.match(/What would you like to view\?/i);
-      if (viewActionMatch) {
-        pendingAction = { type: 'view' };
-      }
-
-      const cartActionMatch = lastMessage.match(/What would you like to add to cart\?/i);
-      if (cartActionMatch) {
-        pendingAction = { type: 'cart' };
-      }
-    }
-
-    // Handle pending actions (user provided product name after vague request)
-    if (pendingAction && !pendingConfirmation) {
-      const matchingProducts = findMatchingProducts(query, mappedProducts);
-      
-      if (matchingProducts.length === 0) {
-        return NextResponse.json({
-          reply: `Sorry, I couldn't find "${query}". Could you try a different product name or be more specific?`,
-          history: [
-            ...(history || []),
-            { role: 'user', content: query },
-            { role: 'assistant', content: `Sorry, I couldn't find "${query}". Could you try a different product name or be more specific?` }
-          ],
-          phase: 'recommendation'
-        });
-      }
-
-      const product = matchingProducts[0];
-      let confirmationMessage = '';
-
-      if (pendingAction.type === 'buy') {
-        confirmationMessage = `Are you sure you want to buy ${product.title}?`;
-      } else if (pendingAction.type === 'view') {
-        confirmationMessage = `Are you sure you want to view ${product.title}?`;
-      } else if (pendingAction.type === 'cart') {
-        confirmationMessage = `Are you sure you want to add ${product.title} to your cart?`;
-      }
+    // Handle nonsense queries
+    if (isNonsenseQuery(query)) {
+      const randomResponse = config.nonsenseResponses[
+        Math.floor(Math.random() * config.nonsenseResponses.length)
+      ];
 
       return NextResponse.json({
-        reply: confirmationMessage,
+        reply: randomResponse,
         history: [
           ...(history || []),
           { role: 'user', content: query },
-          { role: 'assistant', content: confirmationMessage }
+          { role: 'assistant', content: randomResponse }
         ],
-        phase: 'recommendation'
+        phase: 'general'
       });
     }
 
-    // Handle confirmation responses
-    if (pendingConfirmation && (query.toLowerCase().includes('yes') || query.toLowerCase().includes('yeah') || query.toLowerCase().includes('sure') || query.toLowerCase().includes('ok'))) {
-      const product = mappedProducts.find(p =>
-        p.title.toLowerCase().includes(pendingConfirmation.product.toLowerCase())
-      );
+    // Pass context to detectPhase
+    const currentPhase = detectPhase(query, history || [], context);
 
-      if (!product) {
-        return NextResponse.json({
-          reply: "Sorry, I couldn't find that product anymore.",
-          history: [
-            ...(history || []),
-            { role: 'user', content: query },
-            { role: 'assistant', content: "Sorry, I couldn't find that product anymore." }
-          ],
-          phase: 'recommendation'
-        });
-      }
-
-      if (pendingConfirmation.type === 'buy') {
-        return NextResponse.json({
-          reply: `Redirecting you to purchase ${product.title}...`,
-          redirect: `${config.baseUrl}/checkout/?add-to-cart=${product._id}`,
-          product: product.title,
-          history: [
-            ...(history || []),
-            { role: 'user', content: query },
-            { role: 'assistant', content: `Redirecting you to purchase ${product.title}...` }
-          ],
-          phase: 'recommendation'
-        });
-      } else if (pendingConfirmation.type === 'view') {
-        return NextResponse.json({
-          reply: `Taking you to ${product.title} page...`,
-          redirect: `${config.baseUrl}/product/${product.slug}`,
-          history: [
-            ...(history || []),
-            { role: 'user', content: query },
-            { role: 'assistant', content: `Taking you to ${product.title} page...` }
-          ],
-          phase: 'recommendation'
-        });
-      } else if (pendingConfirmation.type === 'cart') {
-        return NextResponse.json({
-          reply: `Added <b>${product.title}</b> to your cart!`,
-          addToCart: {
-            id: product._id,
-            title: product.title,
-            price: product.price,
-            image_url: product.image_url
-          },
-          history: [
-            ...(history || []),
-            { role: 'user', content: query },
-            { role: 'assistant', content: `Added <b>${product.title}</b> to your cart!` }
-          ],
-          phase: 'recommendation'
-        });
-      }
-    }
-
-    // Detect current phase
-    const currentPhase = detectPhase(query, history || []);
-
-    // PHASE 1: GENERAL QUESTIONS - Quick responses
+    // PHASE 1: GENERAL QUESTIONS - Now handled by AI
     if (currentPhase === 'general') {
-      const lowerQuery = query.toLowerCase();
-      let reply = '';
+      // Try quick response again now that we have products
+      
 
-      // Greetings
-      if (lowerQuery.includes('hello') || lowerQuery.includes('hi') || lowerQuery.includes('hey')) {
-        reply = `Hello! Welcome to ${config.storeName}. I'm here to help you find the perfect products. What are you looking for today?`;
-      }
-      // About store
-      else if (lowerQuery.includes('what do you sell') || lowerQuery.includes('what products')) {
-        reply = `We sell a variety of products including card printers, electronics, and more. What specific type of product are you interested in?`;
-      }
-      else if (lowerQuery.includes('what type of products you have') || lowerQuery.includes('what type')) {
-        reply = `We sell a variety of products including card printers, electronics, and more. What specific type of product are you interested in?`;
-      }
-      // General help
-      else if (lowerQuery.includes('help') || lowerQuery.includes('what can you do')) {
-        reply = `I can help you find products, check prices, and answer questions about our inventory. Just tell me what you're looking for!`;
-      }
-      // Default general response
-      else {
-        reply = `Hi there! I'm your shopping assistant at ${config.storeName}. I can help you find products, compare prices, and answer any questions. What can I help you find today?`;
+      const quickResponseWithProducts = await generateQuickResponse(query, mappedProducts);
+      if (quickResponseWithProducts) {
+        return NextResponse.json({
+          reply: quickResponseWithProducts,
+          history: [
+            ...(history || []),
+            { role: 'user', content: query },
+            { role: 'assistant', content: quickResponseWithProducts }
+          ],
+          phase: 'general'
+        });
       }
 
+      // All other general questions go to AI
+      const aiResponse = await handleGeneralQuestion(query, history);
       return NextResponse.json({
-        reply,
+        reply: aiResponse,
         history: [
           ...(history || []),
           { role: 'user', content: query },
-          { role: 'assistant', content: reply }
+          { role: 'assistant', content: aiResponse }
         ],
         phase: 'general'
       });
@@ -623,28 +1091,89 @@ export async function POST(req: NextRequest): Promise<NextResponse<AssistantResp
 
     // Handle vague product requests
     if (isVagueProductRequest(query)) {
+      // Show some random products as suggestions
+      const clarifyingQuestion = generateClarifyingQuestion(mappedProducts);
+
       return NextResponse.json({
-        reply: "I'd be happy to help you find what you need! Could you tell me what type of product you're looking for? For example: electronics, printers, or anything specific you have in mind?",
+        reply: clarifyingQuestion,
         history: [
           ...(history || []),
           { role: 'user', content: query },
-          { role: 'assistant', content: "I'd be happy to help you find what you need! Could you tell me what type of product you're looking for? For example: electronics, printers, or anything specific you have in mind?" }
+          { role: 'assistant', content: clarifyingQuestion }
         ],
         phase: 'recommendation'
       });
     }
 
     // Handle direct action requests
+    const directAction = isDirectActionRequest(query, mappedProducts);
     if (directAction.action) {
       // Vague requests (no product name)
       if (directAction.vague) {
         let reply = '';
-        if (directAction.action === 'buy') {
-          reply = 'What would you like to buy?';
-        } else if (directAction.action === 'view') {
-          reply = 'What would you like to view?';
-        } else if (directAction.action === 'cart') {
-          reply = 'What would you like to add to cart?';
+        // Find related products for all vague actions
+        const relatedProducts = findMatchingProducts(query, mappedProducts).slice(0, 3);
+
+        if (relatedProducts.length > 0) {
+          // Create a rich HTML response with product cards
+          reply = `<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">`;
+
+          if (directAction.action === 'buy') {
+            reply += `<h3 style="color: #2d3748; margin-bottom: 16px;">Here are some products you might want to buy:</h3>`;
+          } else if (directAction.action === 'view') {
+            reply += `<h3 style="color: #2d3748; margin-bottom: 16px;">Here are some products you might want to view:</h3>`;
+          } else if (directAction.action === 'cart') {
+            reply += `<h3 style="color: #2d3748; margin-bottom: 16px;">Here are some products you might want to add to cart:</h3>`;
+          }
+
+          // Add product cards
+          reply += relatedProducts.map(product => `
+      <div style="background: #fff; border-radius: 8px; padding: 16px; margin-bottom: 16px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+        ${product.image_url ? `
+          <img src="${product.image_url}" 
+               style="max-width: 100%; height: 120px; object-fit: contain; margin-bottom: 12px; border-radius: 4px;">
+        ` : ''}
+        <h4 style="margin: 0 0 8px 0; color: #2d3748;">${product.title}</h4>
+        <p style="margin: 0 0 8px 0; color: #4a5568; font-size: 14px;">
+          ${product.description ? product.description.substring(0, 100) + (product.description.length > 100 ? '...' : '') : ''}
+        </p>
+        <p style="margin: 0 0 12px 0; font-weight: bold; color: #2b6cb0;">$${product.price.toFixed(2)}</p>
+        <div style="display: flex; gap: 8px;">
+          <a href="${config.baseUrl}/product/${product.slug}" 
+             style="padding: 8px 12px; background: #edf2f7; color: #2b6cb0; border-radius: 4px; text-decoration: none; font-size: 14px;">
+            View Details
+          </a>
+          ${directAction.action === 'buy' ? `
+            <a href="${config.baseUrl}/checkout/?add-to-cart=${product._id}" 
+               style="padding: 8px 12px; background: #2b6cb0; color: white; border-radius: 4px; text-decoration: none; font-size: 14px;">
+              Buy Now
+            </a>
+          ` : ''}
+          ${directAction.action === 'cart' ? `
+            <a href="${config.baseUrl}/?add-to-cart=${product._id}" 
+               style="padding: 8px 12px; background: #38a169; color: white; border-radius: 4px; text-decoration: none; font-size: 14px;">
+              Add to Cart
+            </a>
+          ` : ''}
+        </div>
+      </div>
+    `).join('');
+
+          // Add closing message
+          reply += `
+      <p style="margin-top: 16px; color: #718096;">
+        Or tell me more specifically what you're looking for.
+      </p>
+    </div>`;
+        } else {
+          // Fallback if no products found
+          if (directAction.action === 'buy') {
+            reply = 'What would you like to buy? I can help you find it.';
+          } else if (directAction.action === 'view') {
+            reply = 'What product would you like to view?';
+          } else if (directAction.action === 'cart') {
+            reply = 'What would you like to add to your cart?';
+          }
         }
 
         return NextResponse.json({
@@ -654,35 +1183,32 @@ export async function POST(req: NextRequest): Promise<NextResponse<AssistantResp
             { role: 'user', content: query },
             { role: 'assistant', content: reply }
           ],
-          phase: 'recommendation'
+          phase: 'recommendation',
+          lastShownProducts: relatedProducts.length > 0 ? relatedProducts : undefined
         });
       }
-      
       // Specific requests (with product name)
-      if (directAction.productName) {
-        const matchingProducts = findMatchingProducts(directAction.productName, mappedProducts);
-
-        if (matchingProducts.length === 0) {
+      if (directAction.productName && directAction.product) {
+        if (directAction.action === 'buy') {
+          const checkoutUrl = `${config.baseUrl}/checkout/?add-to-cart=${directAction.product._id}`;
           return NextResponse.json({
-            reply: `I'm sorry, we don't currently have "${directAction.productName}" in our inventory. Is there anything else I can help you find?`,
+            reply: `Great! Redirecting you to complete your purchase of ${directAction.product.title}...`,
+            redirect: checkoutUrl,
             history: [
               ...(history || []),
               { role: 'user', content: query },
-              { role: 'assistant', content: `I'm sorry, we don't currently have "${directAction.productName}" in our inventory. Is there anything else I can help you find?` }
+              { role: 'assistant', content: `Redirecting you to purchase ${directAction.product.title}` }
             ],
             phase: 'recommendation'
           });
         }
 
-        const product = matchingProducts[0];
+        // For view and cart actions, still ask for confirmation
         let confirmationMessage = '';
-
-        if (directAction.action === 'buy') {
-          confirmationMessage = `Are you sure you want to buy ${product.title}?`;
-        } else if (directAction.action === 'view') {
-          confirmationMessage = `Are you sure you want to view ${product.title}?`;
+        if (directAction.action === 'view') {
+          confirmationMessage = `Would you like to view details for ${directAction.product.title}?`;
         } else if (directAction.action === 'cart') {
-          confirmationMessage = `Are you sure you want to add ${product.title} to your cart?`;
+          confirmationMessage = `Would you like to add ${directAction.product.title} (${directAction.product.price}) to your cart?`;
         }
 
         return NextResponse.json({
@@ -697,26 +1223,216 @@ export async function POST(req: NextRequest): Promise<NextResponse<AssistantResp
       }
     }
 
+    // Handle product comparison requests
+    const comparison = isComparisonQuery(query);
+    if (comparison) {
+      console.log('Detected comparison:', comparison);
+
+      // Find both products using improved matching
+      const product1 = findBestProductMatch(comparison.product1, mappedProducts);
+      const product2 = findBestProductMatch(comparison.product2, mappedProducts);
+
+      console.log('Found products:', { product1: product1?.title, product2: product2?.title });
+
+      if (!product1 || !product2) {
+        const missingProducts = [];
+        if (!product1) missingProducts.push(comparison.product1);
+        if (!product2) missingProducts.push(comparison.product2);
+
+        const reply = `I couldn't find ${missingProducts.join(' and ')} in our inventory. Here are our available products that might be similar:`;
+
+        // Show some related products if available
+        const relatedProducts = findMatchingProducts(query, mappedProducts).slice(0, 3);
+
+        let productHTML = '';
+        if (relatedProducts.length > 0) {
+          productHTML = relatedProducts.map((product, index) => `
+<div style="background: #fff; padding: 16px; border-radius: 12px; margin-bottom: 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); border: 1px solid #eee;">
+  <div style="background: #f3f4f6; color: #374151; padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: 600; display: inline-block; margin-bottom: 8px;">
+    Product ${index + 1}
+  </div>
+  ${product.image_url ? `
+    <img src="${product.image_url}" loading="lazy" 
+         style="width: 100%; height: 180px; object-fit: contain; border-radius: 8px; margin-bottom: 12px;"/>
+  ` : ''}
+  <h3 style="color: #2d3748; font-size: 18px; margin-top: 0; margin-bottom: 8px;">${product.title}</h3>
+  <p style="font-size: 20px; color: #2b6cb0; font-weight: 600; margin: 12px 0;">${product.price}</p>
+  <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+    <a href="${config.baseUrl}/product/${product.slug}" 
+       style="background: #f8fafc; color: #2563EB; padding: 8px 12px; border-radius: 6px; 
+              text-decoration: none; border: 1px solid #e2e8f0; font-size: 14px;">
+      View Details
+    </a>
+    <a href="${config.baseUrl}/checkout/?add-to-cart=${product._id}" 
+       style="background: #2563EB; color: #fff; padding: 8px 12px; border-radius: 6px; 
+              text-decoration: none; font-size: 14px;">
+      Buy Now
+    </a>
+  </div>
+</div>
+`).join('');
+        }
+
+        return NextResponse.json({
+          reply: reply + productHTML,
+          history: [
+            ...(history || []),
+            { role: 'user', content: query },
+            { role: 'assistant', content: reply }
+          ],
+          phase: 'recommendation',
+          lastShownProducts: relatedProducts
+        });
+      }
+
+      // Both products found - generate comparison
+      try {
+        const comparisonResponse = await Promise.race([
+          generateComparisonResponse(product1, product2, services.openai),
+          new Promise<string>((resolve) =>
+            setTimeout(() => resolve(`Here's a comparison between ${product1.title} and ${product2.title}:`), config.timeoutMs)
+          )
+        ]);
+
+        const reply = `
+<div style="font-family: 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif; color: #333; max-width: 800px; margin: 0 auto;">
+  <h2 style="color: #2d3748; font-size: 22px; border-bottom: 2px solid #e2e8f0; padding-bottom: 8px; margin-bottom: 20px;">
+    Comparison: ${product1.title} vs ${product2.title}
+  </h2>
+
+  <div style="background: #f8fafc; padding: 25px; border-radius: 12px; margin-bottom: 30px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); border: 1px solid #e2e8f0;">
+    <div style="font-size: 16px; line-height: 1.7; color: #4a5568;">
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px;">
+        <div style="font-weight: 600; color: #2d3748;">${product1.title}</div>
+        <div style="font-weight: 600; color: #2d3748;">${product2.title}</div>
+      </div>
+      
+      ${comparisonResponse
+            .replace(/\n\n/g, '</div><div style="margin-top: 16px;">')
+            .replace(/\n/g, '<br>')
+            .replace(/\•/g, '•')
+            .replace(/1\./g, '<span style="font-weight: 600;">1.</span>')
+            .replace(/2\./g, '<span style="font-weight: 600;">2.</span>')
+            .replace(/3\./g, '<span style="font-weight: 600;">3.</span>')
+            .replace(/\*(.+?)\*/g, '<span style="font-weight: 600;">$1</span>')
+          }
+    </div>
+  </div>
+
+  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 25px; margin-top: 30px;">
+    <!-- Product 1 Card -->
+    <div style="background: #fff; padding: 20px; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); border: 1px solid #e2e8f0;">
+      <div style="background: #f3f4f6; color: #374151; padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: 600; display: inline-block; margin-bottom: 8px;">
+        Product 1
+      </div>
+      ${product1.image_url ? `
+        <img src="${product1.image_url}" loading="lazy" 
+        style="width: 100%; height: 180px; object-fit: contain; border-radius: 6px; margin-bottom: 15px; background: #f8fafc; border: 1px solid #edf2f7;"/>
+        ` : ''}
+        <h3 style="color: #2d3748; font-size: 18px; margin-top: 0; margin-bottom: 10px;">${product1.title}</h3>
+        <p style="font-size: 20px; color: #2b6cb0; font-weight: 600; margin: 12px 0;">${product1.price}</p>
+        <div style="display: flex; gap: 10px; margin-top: 15px;">
+        <a href="${config.baseUrl}/product/${product1.slug}" 
+        style="background: #4299e1; color: white; padding: 10px 16px; border-radius: 6px; 
+        text-decoration: none; font-size: 14px; font-weight: 500;
+        display: inline-block; text-align: center; flex: 1;">
+        View Details
+        </a>
+        <a href="${config.baseUrl}/checkout/?add-to-cart=${product1._id}" 
+        style="background: #38a169; color: white; padding: 10px 16px; border-radius: 6px; 
+        text-decoration: none; font-size: 14px; font-weight: 500;
+        display: inline-block; text-align: center; flex: 1;">
+        Buy Now
+        </a>
+        </div>
+        </div>
+        
+      <!-- Product 2 Card -->
+      <div style="background: #fff; padding: 20px; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); border: 1px solid #e2e8f0;">
+      <h3 style="color: #2d3748; font-size: 18px; margin-top: 0; margin-bottom: 10px;">Product 2</h3>
+      ${product2.image_url ? `
+        <img src="${product2.image_url}" loading="lazy" 
+             style="width: 100%; height: 180px; object-fit: contain; border-radius: 6px; margin-bottom: 15px; background: #f8fafc; border: 1px solid #edf2f7;"/>
+      ` : ''}
+      <h3 style="color: #2d3748; font-size: 18px; margin-top: 0; margin-bottom: 10px;">${product2.title}</h3>
+      <p style="font-size: 20px; color: #2b6cb0; font-weight: 600; margin: 12px 0;">${product2.price}</p>
+      <div style="display: flex; gap: 10px; margin-top: 15px;">
+        <a href="${config.baseUrl}/product/${product2.slug}" 
+           style="background: #4299e1; color: white; padding: 10px 16px; border-radius: 6px; 
+                  text-decoration: none; font-size: 14px; font-weight: 500;
+                  display: inline-block; text-align: center; flex: 1;">
+          View Details
+        </a>
+        <a href="${config.baseUrl}/checkout/?add-to-cart=${product2._id}" 
+           style="background: #38a169; color: white; padding: 10px 16px; border-radius: 6px; 
+                  text-decoration: none; font-size: 14px; font-weight: 500;
+                  display: inline-block; text-align: center; flex: 1;">
+          Buy Now
+        </a>
+      </div>
+    </div>
+  </div>
+
+  <p style="text-align: center; margin-top: 25px; color: #718096; font-size: 14px;">
+    Need more help deciding? Feel free to ask me anything about these products!
+  </p>
+</div>
+`;
+
+        return NextResponse.json({
+          reply,
+          history: [
+            ...(history || []),
+            { role: 'user', content: query },
+            { role: 'assistant', content: reply }
+          ],
+          phase: 'recommendation'
+        });
+      } catch (error) {
+        console.error('Comparison generation error:', error);
+        return NextResponse.json({
+          reply: "I found both products but I'm having trouble generating a detailed comparison right now. Here are the products you asked about:",
+          history: [
+            ...(history || []),
+            { role: 'user', content: query },
+            { role: 'assistant', content: "I found both products but I'm having trouble generating a detailed comparison right now." }
+          ],
+          phase: 'recommendation'
+        });
+      }
+    }
+
     // PHASE 2: PRODUCT RECOMMENDATION
     const matchingProducts = findMatchingProducts(query, mappedProducts);
     const priceRange = detectPriceRange(query);
     const productKeywords = extractProductKeywords(query);
 
+    // Define recommendation trigger keywords
+    const recommendationKeywords = [
+      'recommend', 'suggest', 'show me', 'what do you have',
+      'products', 'items', 'looking for', 'options', 'choices',
+      'offer', 'available', 'have any', 'provide'
+    ];
+
+    // Check if query contains any recommendation keywords
+    const isRecommendationQuery = recommendationKeywords.some(keyword =>
+      query.toLowerCase().includes(keyword.toLowerCase())
+    );
+
     // Handle the case where no products match
     if (matchingProducts.length === 0) {
       let reply = '';
-      
+
       if (priceRange && productKeywords.length > 0) {
-        // User asked for specific product with price range
-        const priceText = priceRange.max ? `under $${priceRange.max}` : `over $${priceRange.min}`;
-        reply = `Sorry, we don't have any ${productKeywords.join(' ')} ${priceText}. Would you like to see similar products in a different price range?`;
+        const priceText = priceRange.max ? `under ${priceRange.max}` : `over ${priceRange.min}`;
+        reply = `We don't have ${productKeywords.join(' ')} ${priceText}. Would you like to see similar products in a different price range?`;
       } else if (priceRange) {
-        // User asked only for price range
-        const priceText = priceRange.max ? `under $${priceRange.max}` : `over $${priceRange.min}`;
-        reply = `Sorry, we don't have any products ${priceText}. Our products start from a different price range. Would you like to see what's available?`;
+        const priceText = priceRange.max ? `under ${priceRange.max}` : `over ${priceRange.min}`;
+        reply = `We don't have products ${priceText}. Would you like to see what's available?`;
+      } else if (productKeywords.length > 0) {
+        reply = `We don't have "${productKeywords.join(' ')}" in stock. Would you like to see similar products?`;
       } else {
-        // User asked for specific product without price
-        reply = `Sorry, we don't have "${productKeywords.join(' ')}" in our current inventory. Could you try describing what you need differently, or would you like to see similar products?`;
+        reply = generateClarifyingQuestion(mappedProducts);
       }
 
       return NextResponse.json({
@@ -730,60 +1446,94 @@ export async function POST(req: NextRequest): Promise<NextResponse<AssistantResp
       });
     }
 
-    // Create response with matching products
-    let reply = '';
-    
-    if (priceRange && productKeywords.length > 0) {
-      // User asked for specific product with price range
-      const priceText = priceRange.max ? `under $${priceRange.max}` : `over $${priceRange.min}`;
-      reply = `Yes! Here are the ${productKeywords.join(' ')} products we have ${priceText}:\n\n`;
-    } else if (priceRange) {
-      // User asked only for price range
-      const priceText = priceRange.max ? `under $${priceRange.max}` : `over $${priceRange.min}`;
-      reply = `Yes! Here are our products ${priceText}:\n\n`;
+    // Only show products if it's a recommendation query or if we have specific product keywords
+    if (isRecommendationQuery || productKeywords.length > 0) {
+      // Create response with matching products
+      let reply = '';
+
+      if (priceRange && productKeywords.length > 0) {
+        const priceText = priceRange.max ? `under ${priceRange.max}` : `over ${priceRange.min}`;
+        reply = `Here are the ${productKeywords.join(' ')} products we have ${priceText}:\n\n`;
+      } else if (priceRange) {
+        const priceText = priceRange.max ? `under ${priceRange.max}` : `over ${priceRange.min}`;
+        reply = `Here are our products ${priceText}:\n\n`;
+      } else if (productKeywords.length > 0) {
+        reply = `Here are the some products you might be interested in:\n\n`;
+      } else {
+        reply = `Here are some products you might be interested in:\n\n`;
+      }
+
+      // Add product HTML
+      const productHTML = matchingProducts.map(product => `
+    <div style="background: #fff; padding: 16px; border-radius: 12px; margin-bottom: 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); border: 1px solid #eee;">
+      ${product.image_url ? `
+        <img src="${product.image_url}" loading="lazy" 
+             style="width: 100%; height: 180px; object-fit: contain; border-radius: 8px; margin-bottom: 12px;"/>
+      ` : ''}
+      <h3 style="color: #2d3748; font-size: 18px; margin-top: 0; margin-bottom: 8px;">${product.title}</h3>
+      <p style="color: #666; font-size: 14px; margin-bottom: 12px;">
+        ${product.description ? product.description.substring(0, 100) + (product.description.length > 100 ? '...' : '') : ''}
+      </p>
+      <p style="font-size: 20px; color: #2b6cb0; font-weight: 600; margin: 12px 0;">${product.price}</p>
+      <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+        <a href="${config.baseUrl}/product/${product.slug}" 
+           style="background: #f8fafc; color: #2563EB; padding: 8px 12px; border-radius: 6px; 
+                  text-decoration: none; border: 1px solid #e2e8f0; font-size: 14px;">
+          View Details
+        </a>
+        <a href="${config.baseUrl}/checkout/?add-to-cart=${product._id}" 
+           style="background: #2563EB; color: #fff; padding: 8px 12px; border-radius: 6px; 
+                  text-decoration: none; font-size: 14px;">
+          Buy Now
+        </a>
+        <a href="${config.baseUrl}/shop/?add-to-cart=${product._id}" 
+           style="background: #059669; color: #fff; padding: 8px 12px; border-radius: 6px; 
+                  text-decoration: none; font-size: 14px;">
+          Add to Cart
+        </a>
+      </div>
+    </div>
+  `).join('');
+
+      reply += productHTML;
+
+      if (matchingProducts.length > 0) {
+        reply += `\n\nNeed help choosing or have questions about any of these? Just ask!`;
+      }
+
+      return NextResponse.json({
+        reply,
+        history: [
+          ...(history || []),
+          { role: 'user', content: query },
+          { role: 'assistant', content: reply }
+        ],
+        phase: 'recommendation'
+      });
     } else {
-      // User asked for specific product without price
-      reply = `Great! Here are the ${productKeywords.join(' ')} products we have:\n\n`;
+      // If it's not a recommendation query and no specific product keywords were found
+      const reply = `I'm not sure what you're looking for. Could you be more specific or ask for product recommendations?`;
+
+      return NextResponse.json({
+        reply,
+        history: [
+          ...(history || []),
+          { role: 'user', content: query },
+          { role: 'assistant', content: reply }
+        ],
+        phase: 'recommendation'
+      });
     }
-
-    // Add product HTML
-    const productHTML = matchingProducts.map(product => `
-<ul style='list-style:none;'>
-  <li style='background:#fff; padding:16px; border:1px solid #eee; border-radius:12px; margin-bottom:16px; box-shadow:0 2px 8px rgba(0,0,0,0.05); transition:transform 0.2s;'>
-  <img src='${product.image_url || ''}' loading="lazy" style='width:100%; height:180px; object-fit:cover; border-radius:8px; margin-bottom:12px;' alt='${product.title}'/>
-  <strong style='display:block; font-size:16px; margin-bottom:6px;'>${product.title}</strong>
-  <p style='color:#666; font-size:14px; margin-bottom:12px;'>${product.description ? product.description.substring(0, 80) + (product.description.length > 80 ? '...' : '') : 'Premium quality product'}</p>
-  <strong style='display:block; font-size:18px; margin-bottom:12px;'>$${product.price}</strong>
-  <div style='display:flex; gap:8px; flex-wrap:wrap;'>
-    <a href='${config.baseUrl}/product/${product.slug}' style='background:#f8fafc; color:#2563EB; padding:8px 12px; border-radius:6px; text-decoration:none; border:1px solid #e2e8f0; font-size:14px;'>View</a>
-    <a href='${config.baseUrl}/checkout/?add-to-cart=${product._id}' style='background:#2563EB; color:#fff; padding:8px 12px; border-radius:6px; text-decoration:none; font-size:14px;'>Buy Now</a>
-    <a href='${config.baseUrl}/shop/?add-to-cart=${product._id}' style='background:#059669; color:#fff; padding:8px 12px; border-radius:6px; text-decoration:none; font-size:14px;'>Add to Cart</a>
-  </div>
-</li>
-</ul>`).join('');
-
-    reply += productHTML;
-
-    // Add helpful closing message
-    if (matchingProducts.length > 0) {
-      reply += `\n\nNeed help choosing or have questions about any of these products? Just ask!`;
-    }
-
-    return NextResponse.json({
-      reply,
-      history: [
-        ...(history || []),
-        { role: 'user', content: query },
-        { role: 'assistant', content: reply }
-      ],
-      phase: 'recommendation'
-    });
 
   } catch (err) {
     console.error("Customer Assistant Error:", err);
+    const randomFallback = config.fallbackResponses[
+      Math.floor(Math.random() * config.fallbackResponses.length)
+    ];
+
     return NextResponse.json(
       {
-        reply: "Sorry, I encountered an error. Please try again.",
+        reply: randomFallback,
         error: (err as Error).message,
         phase: 'general'
       },
