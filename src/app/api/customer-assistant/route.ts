@@ -295,7 +295,7 @@ function isConfirmationResponse(query: string): 'yes' | 'no' | null {
 }
 
 // Enhanced Phase Detection - prioritize confirmation responses
-function detectPhase(query: string, history: ChatMessage[], context: ConversationContext): 'general' | 'recommendation' {
+function detectPhase(query: string, history: ChatMessage[], context: ConversationContext): 'general' | 'recommendation' | 'comparison' {
   const lowerQuery = query.toLowerCase().trim();
 
   // If we have a pending action and this looks like a confirmation, 
@@ -304,15 +304,15 @@ function detectPhase(query: string, history: ChatMessage[], context: Conversatio
     return 'recommendation';
   }
 
+  if (isComparisonQuery(query)) {
+    return 'recommendation';
+  }
   // Check for empty or nonsense queries
   if (!lowerQuery || lowerQuery.length < 2 || isNonsenseQuery(lowerQuery)) {
     return 'general';
   }
 
   // Check for comparison queries FIRST before other patterns
-  if (isComparisonQuery(query)) {
-    return 'recommendation';
-  }
 
   // Greetings and general questions
   const generalKeywords = [
@@ -343,12 +343,13 @@ function detectPhase(query: string, history: ChatMessage[], context: Conversatio
 
   // Recommendation keywords without product names
   const recommendationKeywords = [
-    'recommend', 'suggest', 'show me', 'looking for', 'options', 'have any',
+    'recommend', 'suggest', 'show me', 'looking for', 'options', 'have any', 'is there any' , 'find me', 'search for', 'there any' , 'here any'
   ];
 
   if (recommendationKeywords.some(keyword => lowerQuery.includes(keyword))) {
     return 'recommendation';
   }
+
 
 
   // Check if it's a recommendation keyword without a product name
@@ -359,7 +360,11 @@ function detectPhase(query: string, history: ChatMessage[], context: Conversatio
 
   if (isRecommendationWithoutProduct) {
     return 'recommendation';
-    
+
+  }
+
+  if (isComparisonQuery(query)) {
+    return 'comparison';
   }
 
   // If it's just a product name, stay in general phase
@@ -543,27 +548,31 @@ function detectPriceRange(query: string): { min?: number; max?: number } | null 
 
 // Enhanced comparison detection
 function isComparisonQuery(query: string): { product1: string; product2: string } | null {
-  const lowerQuery = query.toLowerCase();
+  const lowerQuery = query.toLowerCase().trim();
 
   // Enhanced patterns for comparison questions - more flexible matching
   const patterns = [
     // "difference between X and Y"
-    /(?:what(?:'s| is| are)? (?:the )?)?difference(?:s)? between (?:a )?(.+?) and (?:a )?(.+?)(?:\?|$)/i,
+    /(?:what(?:'s| is| are)? (?:the )?)?difference(?:s)? between (?:a |an |the )?(.+?) and (?:a |an |the )?(.+?)(?:\?|$)/i,
 
     // "compare X and Y" or "comparison between X and Y"
-    /(?:compare|comparison)(?: between)? (?:a )?(.+?) (?:and|vs\.?|versus) (?:a )?(.+?)(?:\?|$)/i,
+    /(?:compare|comparison)(?: between)? (?:a |an |the )?(.+?) (?:and|vs\.?|versus) (?:a |an |the )?(.+?)(?:\?|$)/i,
 
     // "X vs Y" or "X versus Y"
     /(.+?) (?:vs\.?|versus) (.+?)(?:\?|$)/i,
 
     // "which is better X or Y"
-    /(?:which is better|which one is better|what's better)(?: between)? (?:a )?(.+?) (?:or|vs\.?|versus) (?:a )?(.+?)(?:\?|$)/i,
+    /(?:which is better|which one is better|what's better)(?: between)? (?:a |an |the )?(.+?) (?:or|vs\.?|versus) (?:a |an |the )?(.+?)(?:\?|$)/i,
 
     // "should i get X or Y"
-    /(?:should i get|should i buy|would you recommend)(?: a)? (.+?) (?:or|vs\.?|versus) (?:a )?(.+?)(?:\?|$)/i,
+    /(?:should i get|should i buy|would you recommend)(?: a| an| the)? (.+?) (?:or|vs\.?|versus) (?:a |an |the )?(.+?)(?:\?|$)/i,
 
     // More flexible pattern for any comparison structure
-    /(?:what(?:'s| is)?|tell me) (?:about )?(?:the )?(?:difference|comparison) (?:of |between )?(?:a )?(.+?) (?:and|or|vs\.?|versus) (?:a )?(.+?)(?:\?|$)/i
+    /(?:what(?:'s| is)?|tell me) (?:about )?(?:the )?(?:difference|comparison) (?:of |between )?(?:a |an |the )?(.+?) (?:and|or|vs\.?|versus) (?:a |an |the )?(.+?)(?:\?|$)/i,
+
+    // Additional patterns
+    /(?:help me choose between|choose between) (?:a |an |the )?(.+?) (?:and|or|vs\.?|versus) (?:a |an |the )?(.+?)(?:\?|$)/i,
+    /(?:pros and cons of|advantages of) (.+?) (?:vs\.?|versus|compared to) (.+?)(?:\?|$)/i
   ];
 
   for (const pattern of patterns) {
@@ -573,7 +582,7 @@ function isComparisonQuery(query: string): { product1: string; product2: string 
       const product1 = match[1].trim().replace(/^(a |an |the )/i, '');
       const product2 = match[2].trim().replace(/^(a |an |the )/i, '');
 
-      // Make sure both products have meaningful names
+      // Make sure both products have meaningful names (at least 2 characters)
       if (product1.length > 1 && product2.length > 1) {
         return { product1, product2 };
       }
@@ -811,16 +820,71 @@ async function generateQuickResponse(query: string, products: Product[]): Promis
   return null;
 }
 
-async function generateComparisonResponse(product1: Product, product2: Product, openai: OpenAI) {
-  // You can enhance this logic as needed
-  const prompt = `Compare the following two products:\n\nProduct 1: ${product1.title} - ${product1.description}\n\nProduct 2: ${product2.title} - ${product2.description}\n\nHighlight the main differences, pros, and cons.`;
-  const completion = await openai.chat.completions.create({
-    model: "gpt-3.5-turbo",
-    messages: [{ role: "user", content: prompt }],
-    max_tokens: 300,
-    temperature: 0.7,
-  });
-  return completion.choices[0]?.message?.content?.trim() || "No comparison available.";
+async function generateComparisonResponse(product1: Product, product2: Product, openai: OpenAI): Promise<string> {
+  try {
+    const prompt = `You are a helpful shopping assistant. Compare these two products for a customer who is trying to decide between them.
+
+Product 1: ${product1.title}
+Price: $${product1.price}
+Description: ${product1.description || 'No description available'}
+Category: ${product1.category || 'General'}
+
+Product 2: ${product2.title}
+Price: $${product2.price}
+Description: ${product2.description || 'No description available'}
+Category: ${product2.category || 'General'}
+
+Please provide a helpful comparison that covers:
+1. Key differences between the products
+2. Price comparison and value for money
+3. Which product might be better for different use cases
+4. Any notable pros and cons of each
+
+Keep your response conversational, helpful, and under 300 words. Focus on practical differences that would help a customer make a decision.`;
+
+    const completion = await openai.chat.completions.create({
+      model: "gpt-3.5-turbo",
+      messages: [
+        {
+          role: "system",
+          content: "You are a helpful shopping assistant who provides clear, honest product comparisons to help customers make informed decisions."
+        },
+        { role: "user", content: prompt }
+      ],
+      max_tokens: 400,
+      temperature: 0.7,
+    });
+
+    const response = completion.choices[0]?.message?.content?.trim();
+
+    if (!response) {
+      throw new Error("No response from AI");
+    }
+
+    return response;
+  } catch (error) {
+    console.error("AI Comparison Error:", error);
+
+    // Fallback comparison when AI fails
+    return `Here's a comparison between ${product1.title} and ${product2.title}:
+
+**Price Comparison:**
+• ${product1.title}: $${product1.price}
+• ${product2.title}: $${product2.price}
+• Price difference: $${Math.abs(product1.price - product2.price).toFixed(2)}
+
+**Key Details:**
+• Both products are available in our store
+• ${product1.title} ${product1.price > product2.price ? 'is more expensive' : 'is less expensive'} than ${product2.title}
+• Consider your budget and specific needs when choosing
+
+${product1.description && product2.description ?
+        `**Product Details:**\n• ${product1.title}: ${product1.description.substring(0, 100)}...\n• ${product2.title}: ${product2.description.substring(0, 100)}...` :
+        ''
+      }
+
+Feel free to ask me specific questions about either product to help you decide!`;
+  }
 }
 
 // New function to handle general questions with AI
@@ -1053,13 +1117,16 @@ export async function POST(req: NextRequest): Promise<NextResponse<AssistantResp
       });
     }
 
+
+
+
     // Pass context to detectPhase
     const currentPhase = detectPhase(query, history || [], context);
 
     // PHASE 1: GENERAL QUESTIONS - Now handled by AI
     if (currentPhase === 'general') {
       // Try quick response again now that we have products
-      
+
 
       const quickResponseWithProducts = await generateQuickResponse(query, mappedProducts);
       if (quickResponseWithProducts) {
@@ -1086,6 +1153,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<AssistantResp
         phase: 'general'
       });
     }
+
 
     // Handle vague product requests
     if (isVagueProductRequest(query)) {
@@ -1222,29 +1290,46 @@ export async function POST(req: NextRequest): Promise<NextResponse<AssistantResp
     }
 
     // Handle product comparison requests
-    const comparison = isComparisonQuery(query);
-    if (comparison) {
-      console.log('Detected comparison:', comparison);
 
-      // Find both products using improved matching
-      const product1 = findBestProductMatch(comparison.product1, mappedProducts);
-      const product2 = findBestProductMatch(comparison.product2, mappedProducts);
 
-      console.log('Found products:', { product1: product1?.title, product2: product2?.title });
+    // PHASE 2: PRODUCT RECOMMENDATION
+    const matchingProducts = findMatchingProducts(query, mappedProducts);
+    const priceRange = detectPriceRange(query);
+    const productKeywords = extractProductKeywords(query);
 
-      if (!product1 || !product2) {
-        const missingProducts = [];
-        if (!product1) missingProducts.push(comparison.product1);
-        if (!product2) missingProducts.push(comparison.product2);
+    // Define recommendation trigger keywords
+    const recommendationKeywords = [
+      'recommend', 'suggest', 'show me', 'what do you have',
+      'products', 'items', 'looking for', 'options', 'choices',
+      'offer', 'available', 'have any', 'provide'
+    ];
 
-        const reply = `I couldn't find ${missingProducts.join(' and ')} in our inventory. Here are our available products that might be similar:`;
 
-        // Show some related products if available
-        const relatedProducts = findMatchingProducts(query, mappedProducts).slice(0, 3);
+    if (currentPhase === 'recommendation') {
+      // Check for comparison queries FIRST in recommendation phase
+      const comparison = isComparisonQuery(query);
+      if (comparison) {
+        console.log('Detected comparison:', comparison);
 
-        let productHTML = '';
-        if (relatedProducts.length > 0) {
-          productHTML = relatedProducts.map((product, index) => `
+        // Find both products using improved matching
+        const product1 = findBestProductMatch(comparison.product1, mappedProducts);
+        const product2 = findBestProductMatch(comparison.product2, mappedProducts);
+
+        console.log('Found products:', { product1: product1?.title, product2: product2?.title });
+
+        if (!product1 || !product2) {
+          const missingProducts = [];
+          if (!product1) missingProducts.push(comparison.product1);
+          if (!product2) missingProducts.push(comparison.product2);
+
+          const reply = `I couldn't find ${missingProducts.join(' and ')} in our inventory. Here are our available products that might be similar:`;
+
+          // Show some related products if available
+          const relatedProducts = findMatchingProducts(query, mappedProducts).slice(0, 3);
+
+          let productHTML = '';
+          if (relatedProducts.length > 0) {
+            productHTML = relatedProducts.map((product, index) => `
 <div style="background: #fff; padding: 16px; border-radius: 12px; margin-bottom: 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); border: 1px solid #eee;">
   <div style="background: #f3f4f6; color: #374151; padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: 600; display: inline-block; margin-bottom: 8px;">
     Product ${index + 1}
@@ -1254,7 +1339,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<AssistantResp
          style="width: 100%; height: 180px; object-fit: contain; border-radius: 8px; margin-bottom: 12px;"/>
   ` : ''}
   <h3 style="color: #2d3748; font-size: 18px; margin-top: 0; margin-bottom: 8px;">${product.title}</h3>
-  <p style="font-size: 20px; color: #2b6cb0; font-weight: 600; margin: 12px 0;">${product.price}</p>
+  <p style="font-size: 20px; color: #2b6cb0; font-weight: 600; margin: 12px 0;">$${product.price.toFixed(2)}</p>
   <div style="display: flex; gap: 8px; flex-wrap: wrap;">
     <a href="${config.baseUrl}/product/${product.slug}" 
        style="background: #f8fafc; color: #2563EB; padding: 8px 12px; border-radius: 6px; 
@@ -1269,30 +1354,30 @@ export async function POST(req: NextRequest): Promise<NextResponse<AssistantResp
   </div>
 </div>
 `).join('');
+          }
+
+          return NextResponse.json({
+            reply: reply + productHTML,
+            history: [
+              ...(history || []),
+              { role: 'user', content: query },
+              { role: 'assistant', content: reply }
+            ],
+            phase: 'recommendation',
+            lastShownProducts: relatedProducts
+          });
         }
 
-        return NextResponse.json({
-          reply: reply + productHTML,
-          history: [
-            ...(history || []),
-            { role: 'user', content: query },
-            { role: 'assistant', content: reply }
-          ],
-          phase: 'recommendation',
-          lastShownProducts: relatedProducts
-        });
-      }
+        // Both products found - generate comparison response
+        try {
+          const comparisonResponse = await Promise.race([
+            generateComparisonResponse(product1, product2, services.openai),
+            new Promise<string>((_, reject) =>
+              setTimeout(() => reject(new Error('AI timeout')), config.timeoutMs)
+            )
+          ]);
 
-      // Both products found - generate comparison
-      try {
-        const comparisonResponse = await Promise.race([
-          generateComparisonResponse(product1, product2, services.openai),
-          new Promise<string>((resolve) =>
-            setTimeout(() => resolve(`Here's a comparison between ${product1.title} and ${product2.title}:`), config.timeoutMs)
-          )
-        ]);
-
-        const reply = `
+          const reply = `
 <div style="font-family: 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif; color: #333; max-width: 800px; margin: 0 auto;">
   <h2 style="color: #2d3748; font-size: 22px; border-bottom: 2px solid #e2e8f0; padding-bottom: 8px; margin-bottom: 20px;">
     Comparison: ${product1.title} vs ${product2.title}
@@ -1300,60 +1385,55 @@ export async function POST(req: NextRequest): Promise<NextResponse<AssistantResp
 
   <div style="background: #f8fafc; padding: 25px; border-radius: 12px; margin-bottom: 30px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); border: 1px solid #e2e8f0;">
     <div style="font-size: 16px; line-height: 1.7; color: #4a5568;">
-      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px;">
-        <div style="font-weight: 600; color: #2d3748;">${product1.title}</div>
-        <div style="font-weight: 600; color: #2d3748;">${product2.title}</div>
-      </div>
-      
       ${comparisonResponse
-            .replace(/\n\n/g, '</div><div style="margin-top: 16px;">')
-            .replace(/\n/g, '<br>')
-            .replace(/\•/g, '•')
-            .replace(/1\./g, '<span style="font-weight: 600;">1.</span>')
-            .replace(/2\./g, '<span style="font-weight: 600;">2.</span>')
-            .replace(/3\./g, '<span style="font-weight: 600;">3.</span>')
-            .replace(/\*(.+?)\*/g, '<span style="font-weight: 600;">$1</span>')
-          }
+              .replace(/\n\n/g, '</div><div style="margin-top: 16px;">')
+              .replace(/\n/g, '<br>')
+              .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+              .replace(/\*(.+?)\*/g, '<em>$1</em>')
+              .replace(/•/g, '•')
+            }
     </div>
   </div>
 
   <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 25px; margin-top: 30px;">
     <!-- Product 1 Card -->
     <div style="background: #fff; padding: 20px; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); border: 1px solid #e2e8f0;">
-      <div style="background: #f3f4f6; color: #374151; padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: 600; display: inline-block; margin-bottom: 8px;">
+      <div style="background: #e6fffa; color: #065f46; padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: 600; display: inline-block; margin-bottom: 8px;">
         Product 1
       </div>
       ${product1.image_url ? `
         <img src="${product1.image_url}" loading="lazy" 
-        style="width: 100%; height: 180px; object-fit: contain; border-radius: 6px; margin-bottom: 15px; background: #f8fafc; border: 1px solid #edf2f7;"/>
-        ` : ''}
-        <h3 style="color: #2d3748; font-size: 18px; margin-top: 0; margin-bottom: 10px;">${product1.title}</h3>
-        <p style="font-size: 20px; color: #2b6cb0; font-weight: 600; margin: 12px 0;">${product1.price}</p>
-        <div style="display: flex; gap: 10px; margin-top: 15px;">
+             style="width: 100%; height: 180px; object-fit: contain; border-radius: 6px; margin-bottom: 15px; background: #f8fafc; border: 1px solid #edf2f7;"/>
+      ` : ''}
+      <h3 style="color: #2d3748; font-size: 18px; margin-top: 0; margin-bottom: 10px;">${product1.title}</h3>
+      <p style="font-size: 20px; color: #2b6cb0; font-weight: 600; margin: 12px 0;">$${product1.price.toFixed(2)}</p>
+      <div style="display: flex; gap: 10px; margin-top: 15px;">
         <a href="${config.baseUrl}/product/${product1.slug}" 
-        style="background: #4299e1; color: white; padding: 10px 16px; border-radius: 6px; 
-        text-decoration: none; font-size: 14px; font-weight: 500;
-        display: inline-block; text-align: center; flex: 1;">
-        View Details
+           style="background: #4299e1; color: white; padding: 10px 16px; border-radius: 6px; 
+                  text-decoration: none; font-size: 14px; font-weight: 500;
+                  display: inline-block; text-align: center; flex: 1;">
+          View Details
         </a>
         <a href="${config.baseUrl}/checkout/?add-to-cart=${product1._id}" 
-        style="background: #38a169; color: white; padding: 10px 16px; border-radius: 6px; 
-        text-decoration: none; font-size: 14px; font-weight: 500;
-        display: inline-block; text-align: center; flex: 1;">
-        Buy Now
+           style="background: #38a169; color: white; padding: 10px 16px; border-radius: 6px; 
+                  text-decoration: none; font-size: 14px; font-weight: 500;
+                  display: inline-block; text-align: center; flex: 1;">
+          Buy Now
         </a>
-        </div>
-        </div>
-        
-      <!-- Product 2 Card -->
-      <div style="background: #fff; padding: 20px; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); border: 1px solid #e2e8f0;">
-      <h3 style="color: #2d3748; font-size: 18px; margin-top: 0; margin-bottom: 10px;">Product 2</h3>
+      </div>
+    </div>
+    
+    <!-- Product 2 Card -->
+    <div style="background: #fff; padding: 20px; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); border: 1px solid #e2e8f0;">
+      <div style="background: #fef3c7; color: #92400e; padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: 600; display: inline-block; margin-bottom: 8px;">
+        Product 2
+      </div>
       ${product2.image_url ? `
         <img src="${product2.image_url}" loading="lazy" 
              style="width: 100%; height: 180px; object-fit: contain; border-radius: 6px; margin-bottom: 15px; background: #f8fafc; border: 1px solid #edf2f7;"/>
       ` : ''}
       <h3 style="color: #2d3748; font-size: 18px; margin-top: 0; margin-bottom: 10px;">${product2.title}</h3>
-      <p style="font-size: 20px; color: #2b6cb0; font-weight: 600; margin: 12px 0;">${product2.price}</p>
+      <p style="font-size: 20px; color: #2b6cb0; font-weight: 600; margin: 12px 0;">$${product2.price.toFixed(2)}</p>
       <div style="display: flex; gap: 10px; margin-top: 15px;">
         <a href="${config.baseUrl}/product/${product2.slug}" 
            style="background: #4299e1; color: white; padding: 10px 16px; border-radius: 6px; 
@@ -1377,41 +1457,53 @@ export async function POST(req: NextRequest): Promise<NextResponse<AssistantResp
 </div>
 `;
 
-        return NextResponse.json({
-          reply,
-          history: [
-            ...(history || []),
-            { role: 'user', content: query },
-            { role: 'assistant', content: reply }
-          ],
-          phase: 'recommendation'
-        });
-      } catch (error) {
-        console.error('Comparison generation error:', error);
-        return NextResponse.json({
-          reply: "I found both products but I'm having trouble generating a detailed comparison right now. Here are the products you asked about:",
-          history: [
-            ...(history || []),
-            { role: 'user', content: query },
-            { role: 'assistant', content: "I found both products but I'm having trouble generating a detailed comparison right now." }
-          ],
-          phase: 'recommendation'
-        });
+          return NextResponse.json({
+            reply,
+            history: [
+              ...(history || []),
+              { role: 'user', content: query },
+              { role: 'assistant', content: reply }
+            ],
+            phase: 'recommendation',
+            lastShownProducts: [product1, product2]
+          });
+
+        } catch (error) {
+          console.error('Comparison generation error:', error);
+
+          // Fallback comparison when AI fails
+          const fallbackComparison = await generateComparisonResponse(product1, product2, services.openai);
+
+          const reply = `
+<div style="font-family: 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif; color: #333; max-width: 800px; margin: 0 auto;">
+  <h2 style="color: #2d3748; font-size: 22px; border-bottom: 2px solid #e2e8f0; padding-bottom: 8px; margin-bottom: 20px;">
+    Comparison: ${product1.title} vs ${product2.title}
+  </h2>
+
+  <div style="background: #f8fafc; padding: 25px; border-radius: 12px; margin-bottom: 30px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); border: 1px solid #e2e8f0;">
+    <div style="font-size: 16px; line-height: 1.7; color: #4a5568;">
+      ${fallbackComparison.replace(/\n/g, '<br>').replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')}
+    </div>
+  </div>
+</div>
+`;
+
+          return NextResponse.json({
+            reply,
+            history: [
+              ...(history || []),
+              { role: 'user', content: query },
+              { role: 'assistant', content: reply }
+            ],
+            phase: 'recommendation',
+            lastShownProducts: [product1, product2]
+          });
+        }
       }
+
+      // Continue with other recommendation phase logic...
+      // (rest of recommendation phase code)
     }
-
-    // PHASE 2: PRODUCT RECOMMENDATION
-    const matchingProducts = findMatchingProducts(query, mappedProducts);
-    const priceRange = detectPriceRange(query);
-    const productKeywords = extractProductKeywords(query);
-
-    // Define recommendation trigger keywords
-    const recommendationKeywords = [
-      'recommend', 'suggest', 'show me', 'what do you have',
-      'products', 'items', 'looking for', 'options', 'choices',
-      'offer', 'available', 'have any', 'provide'
-    ];
-
     // Check if query contains any recommendation keywords
     const isRecommendationQuery = recommendationKeywords.some(keyword =>
       query.toLowerCase().includes(keyword.toLowerCase())
