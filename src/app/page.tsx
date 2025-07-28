@@ -1,9 +1,9 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
-import { Sparkles, Send, RotateCw, X, MessageCircle } from "lucide-react";
-import DOMPurify from 'dompurify';
-import { useRouter } from 'next/navigation';
+import { Sparkles, Send, RotateCw, X, MessageCircle, ChevronDown, ChevronUp } from "lucide-react";
+import DOMPurify from "dompurify";
+import { useRouter } from "next/navigation";
 
 interface Message {
   id: string;
@@ -12,96 +12,149 @@ interface Message {
   timestamp: Date;
 }
 
+interface Product {
+  id: string;
+  title: string;
+  price: number;
+  image_url?: string;
+}
+
 const CustomerAssistant = () => {
   const [isOpen, setIsOpen] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [isMinimized, setIsMinimized] = useState(false);
+  const [typingIndicator, setTypingIndicator] = useState(false);
+  const [pendingAction, setPendingAction] = useState<{
+    type: "buy" | "addToCart";
+    productId: string;
+    productTitle: string;
+  } | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   const router = useRouter();
 
   const toggleChat = () => {
     setIsOpen(!isOpen);
-    // Persist chat open state
     if (!isOpen) {
-      sessionStorage.setItem('chatOpen', 'true');
+      sessionStorage.setItem("chatOpen", "true");
+      setTimeout(() => inputRef.current?.focus(), 300);
     } else {
-      sessionStorage.removeItem('chatOpen');
+      sessionStorage.removeItem("chatOpen");
     }
   };
 
-  const addMessage = (message: Message) => {
-    setMessages(prev => [...prev, message]);
+  const toggleMinimize = () => {
+    setIsMinimized(!isMinimized);
   };
 
-  // Add global addToCartAndCheckout function
+  const addMessage = (message: Message) => {
+    setMessages((prev) => [...prev, message]);
+    if (!message.isUser) {
+      setTypingIndicator(true);
+      setTimeout(() => setTypingIndicator(false), 1000);
+    }
+  };
+
   useEffect(() => {
-    (window as any).addToCartAndCheckout = (productId: number) => {
-      console.log('Buy Now clicked for product ID:', productId);
-      // Direct redirect to add-to-cart URL - this bypasses CORS issues
-      window.location.href = `http://plugin.ijkstaging.com/shop/?add-to-cart=${productId}`;
+    const handleMessageClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+
+      const buyButton = target.closest(".assistant-buy-now-btn");
+      if (buyButton) {
+        e.preventDefault();
+        const productId = buyButton.getAttribute("data-product-id");
+        const productTitle = buyButton.getAttribute("data-product-title");
+        if (productId && productTitle) {
+          setPendingAction({
+            type: "buy",
+            productId,
+            productTitle,
+          });
+          addMessage({
+            id: Date.now().toString(),
+            content: `Are you sure you want to buy <strong>${productTitle}</strong>? (Type "yes" to confirm or anything else to cancel)`,
+            isUser: false,
+            timestamp: new Date(),
+          });
+        }
+        return;
+      }
+
+      const addToCartButton = target.closest(".assistant-add-to-cart-btn");
+      if (addToCartButton) {
+        e.preventDefault();
+        const productId = addToCartButton.getAttribute("data-product-id");
+        const productTitle = addToCartButton.getAttribute("data-product-title");
+        if (productId && productTitle) {
+          setPendingAction({
+            type: "addToCart",
+            productId,
+            productTitle,
+          });
+          addMessage({
+            id: Date.now().toString(),
+            content: `Are you sure you want to add <strong>${productTitle}</strong> to your cart? (Type "yes" to confirm or anything else to cancel)`,
+            isUser: false,
+            timestamp: new Date(),
+          });
+        }
+        return;
+      }
+
+      const productLink = target.closest(".assistant-product-link");
+      if (productLink) {
+        return;
+      }
     };
-    
-    console.log('addToCartAndCheckout function attached to window');
-    
+
+    document.addEventListener("click", handleMessageClick);
     return () => {
-      delete (window as any).addToCartAndCheckout;
+      document.removeEventListener("click", handleMessageClick);
     };
   }, []);
 
-  // Add starting message when the chat is opened
   useEffect(() => {
-    // Check if the chat is open and there are no messages yet
     if (isOpen && messages.length === 0) {
-      // Only add if there isn't already a welcome message
-      const hasWelcomeMessage = messages.some(msg => 
-        msg.content.includes("Hello! How can I assist you today?") && !msg.isUser
+      const hasWelcomeMessage = messages.some(
+        (msg) =>
+          msg.content.includes("Hello! How can I assist you today?") && !msg.isUser
       );
-      
+
       if (!hasWelcomeMessage) {
-        addMessage({
-          id: Date.now().toString(),
-          content: "Hello! How can I assist you today?",
-          isUser: false,
-          timestamp: new Date(),
-        });
+        setTimeout(() => {
+          addMessage({
+            id: Date.now().toString(),
+            content: "Hello! 👋 How can I assist you with your shopping today?",
+            isUser: false,
+            timestamp: new Date(),
+          });
+        }, 500);
       }
     }
   }, [isOpen, messages]);
 
-  // Scroll to bottom of chat
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  // Restore chat state from sessionStorage on component mount
-  useEffect(() => {
-    const savedMessages = sessionStorage.getItem('chatMessages');
-    const chatOpen = sessionStorage.getItem('chatOpen');
-    
-    if (savedMessages) {
-      const parsedMessages = JSON.parse(savedMessages);
-      // Convert string timestamps back to Date objects
-      const messagesWithDates = parsedMessages.map((msg: any) => ({
-        ...msg,
-        timestamp: new Date(msg.timestamp)
-      }));
-      setMessages(messagesWithDates);
-      sessionStorage.removeItem('chatMessages');
-    }
-    
-    if (chatOpen) {
-      setIsOpen(true);
-    }
-  }, []);
+  const handleRedirect = (url: string) => {
+    console.log("Redirecting to:", url);
+    window.open(url, "_blank");
+  };
 
-  const renderMessageContent = (content: string) => {
-    const sanitized = DOMPurify.sanitize(content, {
-      ADD_TAGS: ['img', 'button'],
-      ADD_ATTR: ['style', 'src', 'alt', 'onclick']
-    });
-    return <div dangerouslySetInnerHTML={{ __html: sanitized }} />;
+  const handleAddToCart = (productId: string) => {
+    sessionStorage.setItem("chatMessages", JSON.stringify(messages));
+    sessionStorage.setItem("chatOpen", "true");
+    handleRedirect(`https://plugin.ijkstaging.com/shop/?add-to-cart=${productId}`);
+  };
+
+  const handleBuyNow = (productId: string) => {
+    sessionStorage.setItem("chatMessages", JSON.stringify(messages));
+    sessionStorage.setItem("chatOpen", "true");
+    handleRedirect(`https://plugin.ijkstaging.com/checkout/?add-to-cart=${productId}`);
   };
 
   const handleSubmit = async () => {
@@ -110,17 +163,37 @@ const CustomerAssistant = () => {
       return;
     }
 
+    if (pendingAction && input.toLowerCase().trim() === "yes") {
+      const actionMessage = {
+        id: Date.now().toString(),
+        content: `Processing your request for <strong>${pendingAction.productTitle}</strong>...`,
+        isUser: false,
+        timestamp: new Date(),
+      };
+      addMessage(actionMessage);
+
+      if (pendingAction.type === "buy") {
+        setTimeout(() => handleBuyNow(pendingAction.productId), 1000);
+      } else if (pendingAction.type === "addToCart") {
+        setTimeout(() => handleAddToCart(pendingAction.productId), 1000);
+      }
+      setPendingAction(null);
+      setInput("");
+      return;
+    }
+
     const userMessage = {
       id: Date.now().toString(),
       content: input,
       isUser: true,
-      timestamp: new Date()
+      timestamp: new Date(),
     };
 
     addMessage(userMessage);
     setInput("");
     setLoading(true);
     setError("");
+    setPendingAction(null);
 
     try {
       const res = await fetch("/api/customer-assistant", {
@@ -128,107 +201,71 @@ const CustomerAssistant = () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           query: input,
-          history: messages.filter(m => !m.isUser).map(m => ({
+          history: messages.filter((m) => !m.isUser).map((m) => ({
             role: "assistant",
-            content: m.content
-          }))
+            content: m.content,
+          })),
         }),
       });
 
-      if (!res.ok) throw new Error("Network response was not ok");
+      if (!res.ok) throw new Error("Request failed");
 
       const data = await res.json();
 
-      // Handle addToCart from backend (confirmation flow)
-      if (data.addToCart) {
-        const cart = JSON.parse(localStorage.getItem('cart') || '[]');
-        if (!cart.some((item: any) => item.id === data.addToCart.id)) {
-          cart.push(data.addToCart);
-          localStorage.setItem('cart', JSON.stringify(cart));
-          addMessage({
+      if (data.redirect) {
+        setTimeout(() => {
+          window.open(data.redirect, '_blank');
+          const aiMessage = {
             id: Date.now().toString(),
-            content: `<span style="color:green;">Added <b>${data.addToCart.title}</b> to your cart!</span>`,
+            content: `Opening <strong>${data.product || "the page"}</strong> in a new tab...`,
             isUser: false,
-            timestamp: new Date()
-          });
-        } else {
-          addMessage({
-            id: Date.now().toString(),
-            content: `<span style="color:orange;">${data.addToCart.title} is already in your cart.</span>`,
-            isUser: false,
-            timestamp: new Date()
-          });
-        }
+            timestamp: new Date(),
+          };
+          addMessage(aiMessage);
+
+          sessionStorage.setItem("chatMessages", JSON.stringify([...messages, userMessage, aiMessage]));
+          sessionStorage.setItem("chatOpen", "true");
+        }, 1000);
         return;
       }
 
-      if (data.redirect) {
+      setTimeout(() => {
         const aiMessage = {
           id: Date.now().toString(),
           content: data.reply,
           isUser: false,
-          timestamp: new Date()
+          timestamp: new Date(),
         };
         addMessage(aiMessage);
-
-        // Store messages in sessionStorage before redirecting
-        sessionStorage.setItem('chatMessages', JSON.stringify([
-          ...messages,
-          userMessage,
-          aiMessage
-        ]));
-        sessionStorage.setItem('chatOpen', 'true');
-
-        setTimeout(() => {
-          window.location.href = data.redirect;
-        }, 1500);
-        return;
-      }
-
-      const aiMessage = {
-        id: Date.now().toString(),
-        content: data.reply,
-        isUser: false,
-        timestamp: new Date()
-      };
-      addMessage(aiMessage);
-
+      }, 800);
     } catch (err) {
-      setError("Failed to get response. Please try again.");
-      console.error(err);
+      const errorMessage = err instanceof Error ? err.message : "Failed to get response";
+      setError(errorMessage);
+
+      addMessage({
+        id: Date.now().toString(),
+        content: `<span style="color:red;">Sorry, I encountered an error: ${errorMessage}</span>`,
+        isUser: false,
+        timestamp: new Date(),
+      });
+
+      console.error("API Error:", err);
     } finally {
       setLoading(false);
     }
   };
 
-  // Intercept clicks on product card links
-  useEffect(() => {
-    const handleLinkClick = (e: MouseEvent) => {
-      const target = e.target as HTMLElement;
-      if (target.tagName === 'A' && target.closest('.assistant-product-link')) {
-        e.preventDefault();
-        const href = (target as HTMLAnchorElement).getAttribute('href');
-        if (href) {
-          // Persist chat state
-          sessionStorage.setItem('chatMessages', JSON.stringify(messages));
-          sessionStorage.setItem('chatOpen', 'true');
-          router.push(href);
-        }
-      }
-    };
-    const chatArea = document.getElementById('assistant-chat-area');
-    if (chatArea) {
-      chatArea.addEventListener('click', handleLinkClick);
-    }
-    return () => {
-      if (chatArea) {
-        chatArea.removeEventListener('click', handleLinkClick);
-      }
-    };
-  }, [messages, router]);
+  const renderMessageContent = (content: string) => {
+    const sanitized = DOMPurify.sanitize(content, {
+      ADD_TAGS: ["img", "button", "a"],
+      ADD_ATTR: ["style", "src", "alt", "href", "class", "data-product-id", "data-product-title", "target"],
+    });
+
+    return <div dangerouslySetInnerHTML={{ __html: sanitized }} />;
+  };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       handleSubmit();
     }
@@ -236,98 +273,175 @@ const CustomerAssistant = () => {
 
   if (!isOpen) {
     return (
-      <div className="fixed bottom-8 right-8 z-50">
+      <div className="fixed bottom-8 right-8 z-50 transition-transform duration-300 hover:scale-110 active:scale-95">
         <button
           onClick={toggleChat}
-          className="bg-blue-600 text-white p-4 rounded-full shadow-lg hover:bg-blue-700 transition transform hover:scale-110"
+          className="bg-gradient-to-br from-blue-600 to-purple-600 text-white p-4 rounded-full shadow-xl hover:shadow-2xl transition-all duration-300 flex items-center justify-center relative group"
           aria-label="Open chat"
         >
-          <MessageCircle size={28} />
+          <MessageCircle size={28} className="transition-transform group-hover:rotate-12" />
         </button>
       </div>
     );
   }
 
   return (
-    <div className="fixed bottom-4 right-4 z-50 w-full max-w-[calc(100%-2rem)] sm:max-w-md md:max-w-lg lg:max-w-xl xl:max-w-2xl">
-      <div className="w-full h-[calc(100vh-8rem)] sm:h-[600px] bg-gradient-to-t from-white via-blue-50 to-blue-100 shadow-xl rounded-2xl overflow-hidden border border-gray-300 flex flex-col transition-all duration-300 ease-in-out transform hover:scale-105">
+    <div className="fixed bottom-4 right-4 z-50 w-full max-w-[calc(100%-2rem)] sm:max-w-md md:max-w-lg lg:max-w-xl xl:max-w-2xl transition-all duration-300 ease-in-out">
+      <div className={`w-full ${isMinimized ? "h-16" : "h-[calc(100vh-8rem)] sm:h-[600px]"} bg-white shadow-2xl rounded-2xl overflow-hidden border border-gray-200 flex flex-col transition-all duration-300`}>
         {/* Chat header */}
-        <div className="bg-blue-600 text-white p-4 flex items-center justify-between rounded-t-xl transition-all duration-300 ease-in-out hover:bg-blue-700">
+        <div className="bg-gradient-to-r from-blue-600 to-purple-600 text-white p-4 flex items-center justify-between rounded-t-xl cursor-pointer" onClick={toggleMinimize}>
           <div className="flex items-center gap-2 sm:gap-3">
-            <Sparkles className="text-yellow-300 w-6 h-6 sm:w-7 sm:h-7" />
+            <div className="relative">
+              <Sparkles className="text-yellow-300 w-6 h-6 sm:w-7 sm:h-7 animate-pulse" />
+              <div className="absolute -top-1 -right-1 w-3 h-3 bg-green-400 rounded-full border-2 border-white"></div>
+            </div>
             <h2 className="text-lg sm:text-xl font-semibold">Shopping Assistant</h2>
           </div>
-          <button
-            onClick={toggleChat}
-            className="text-white hover:text-gray-200 transition"
-            aria-label="Close chat"
-          >
-            <X className="w-6 h-6 sm:w-7 sm:h-7" />
-          </button>
-        </div>
-
-        {/* Messages area */}
-        <div id="assistant-chat-area" className="flex-1 overflow-y-auto p-4 space-y-4">
-          {messages.map((message) => (
-            <div
-              key={message.id}
-              className={`flex ${message.isUser ? 'justify-end' : 'justify-start'}`}
-            >
-              <div
-                className={`max-w-[85%] rounded-xl p-3 sm:p-4 text-sm sm:text-base transition-all duration-300 ease-in-out ${message.isUser
-                  ? 'bg-blue-600 text-white rounded-br-none shadow-lg'
-                  : 'bg-gray-100 text-gray-800 rounded-bl-none shadow-md'}`}
-              >
-                {!message.isUser ? (
-                  renderMessageContent(message.content.replace(/\u003ca /g, '\u003ca class="assistant-product-link" '))
-                ) : (
-                  <p>{message.content}</p>
-                )}
-                <p className="text-xs opacity-70 mt-1 sm:mt-2">
-                  {message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                </p>
-              </div>
-            </div>
-          ))}
-          {loading && (
-            <div className="flex justify-start">
-              <div className="bg-gray-100 text-gray-800 rounded-xl rounded-bl-none p-2 sm:p-3 max-w-[85%]">
-                <div className="flex items-center gap-2 sm:gap-3">
-                  <RotateCw className="animate-spin w-5 h-5 sm:w-[22px] sm:h-[22px]" />
-                  <span className="text-sm sm:text-base">Thinking...</span>
-                </div>
-              </div>
-            </div>
-          )}
-          <div ref={messagesEndRef} />
-        </div>
-
-        {/* Input area */}
-        <div className="border-t border-gray-300 p-4 bg-white shadow-inner rounded-b-xl">
-          {error && (
-            <div className="mb-2 sm:mb-3 p-3 bg-red-100 text-red-700 rounded-lg text-sm sm:text-base shadow-md">
-              {error}
-            </div>
-          )}
-          <div className="flex gap-3">
-            <input
-              type="text"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder="Type your message..."
-              className="flex-1 px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm sm:text-base transition-all duration-300"
-              disabled={loading}
-            />
+          <div className="flex items-center gap-2">
             <button
-              onClick={handleSubmit}
-              disabled={loading || !input.trim()}
-              className="bg-blue-600 text-white p-3 rounded-xl hover:bg-blue-700 transition disabled:opacity-50"
+              onClick={toggleMinimize}
+              className="text-white hover:text-gray-200 transition p-1 rounded-full hover:bg-white/10"
+              aria-label={isMinimized ? "Maximize chat" : "Minimize chat"}
             >
-              <Send className="w-5 h-5 sm:w-6 sm:h-6" />
+              {isMinimized ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
+            </button>
+            <button
+              onClick={toggleChat}
+              className="text-white hover:text-gray-200 transition p-1 rounded-full hover:bg-white/10"
+              aria-label="Close chat"
+            >
+              <X size={20} />
             </button>
           </div>
         </div>
+
+        {!isMinimized && (
+          <>
+            {/* Messages area */}
+            <div
+              id="assistant-chat-area"
+              className="flex-1 overflow-y-auto p-4 space-y-4 bg-gradient-to-b from-white via-blue-50 to-blue-100"
+            >
+              {messages.map((message) => (
+                <div
+                  key={message.id}
+                  className={`flex ${message.isUser ? "justify-end" : "justify-start"} transition-all duration-300 ease-out`}
+                >
+                  <div
+                    className={`max-w-[85%] rounded-2xl p-3 sm:p-4 text-sm sm:text-base relative transition-all duration-300 ${
+                      message.isUser
+                        ? "bg-gradient-to-br from-blue-600 to-blue-500 text-white rounded-br-none shadow-lg"
+                        : "bg-white text-gray-800 rounded-bl-none shadow-md border border-gray-100"
+                    }`}
+                  >
+                    {renderMessageContent(message.content)}
+                    <div className="absolute bottom-0 right-0 w-3 h-3 overflow-hidden">
+                      <div className={`absolute w-4 h-4 rounded-sm ${
+                        message.isUser ? "bg-blue-600" : "bg-white"
+                      } transform rotate-45 -right-1 -bottom-1 ${
+                        message.isUser 
+                          ? "shadow-[2px_2px_2px_rgba(0,0,0,0.1)]" 
+                          : "shadow-[1px_1px_1px_rgba(0,0,0,0.1)] border border-gray-100"
+                      }`}></div>
+                    </div>
+                    <p className={`text-xs mt-1 sm:mt-2 ${
+                      message.isUser ? "text-blue-100" : "text-gray-500"
+                    }`}>
+                      {message.timestamp.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                    </p>
+                  </div>
+                </div>
+              ))}
+
+              {loading && (
+                <div className="flex justify-start">
+                  <div className="bg-white text-gray-800 rounded-2xl rounded-bl-none p-3 sm:p-4 max-w-[85%] shadow-md border border-gray-100">
+                    <div className="flex items-center gap-3 sm:gap-4">
+                      <div className="flex space-x-1">
+                        <div className="w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-full bg-blue-500 animate-bounce" />
+                        <div className="w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-full bg-blue-600 animate-bounce delay-100" />
+                        <div className="w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-full bg-blue-700 animate-bounce delay-200" />
+                      </div>
+                      <span className="text-sm sm:text-base font-medium">Generating response...</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {typingIndicator && !loading && (
+                <div className="flex justify-start">
+                  <div className="bg-white text-gray-800 rounded-2xl rounded-bl-none p-3 sm:p-4 max-w-[85%] shadow-md border border-gray-100">
+                    <div className="flex items-center gap-2">
+                      <div className="flex space-x-1">
+                        <div className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-pulse" />
+                        <div className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-pulse delay-150" />
+                        <div className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-pulse delay-300" />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div ref={messagesEndRef} />
+            </div>
+
+            {/* Input area */}
+            <div className="border-t border-gray-200 p-4 bg-white shadow-inner rounded-b-xl">
+              {error && (
+                <div className="mb-2 sm:mb-3 p-3 bg-red-50 text-red-700 rounded-lg text-sm sm:text-base shadow-inner border border-red-100 flex items-start gap-2 transition-all duration-300">
+                  <div className="bg-red-100 p-1 rounded-full">
+                    <X size={14} className="text-red-600" />
+                  </div>
+                  {error}
+                </div>
+              )}
+              <div className="flex gap-3">
+                <div className="relative flex-1">
+                  <input
+                    ref={inputRef}
+                    type="text"
+                    value={input}
+                    onChange={(e) => setInput(e.target.value)}
+                    onKeyDown={handleKeyDown}
+                    placeholder={
+                      pendingAction
+                        ? "Type 'yes' to confirm or anything else to cancel"
+                        : "Type your message..."
+                    }
+                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm sm:text-base pr-12"
+                    disabled={loading}
+                  />
+                  {input && (
+                    <button
+                      onClick={() => setInput("")}
+                      className="absolute right-16 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors"
+                    >
+                      <X size={18} />
+                    </button>
+                  )}
+                </div>
+                <button
+                  onClick={handleSubmit}
+                  disabled={loading || !input.trim()}
+                  className={`p-3 rounded-xl transition-all duration-200 ${
+                    loading || !input.trim()
+                      ? "bg-gray-300 text-gray-500"
+                      : "bg-gradient-to-br from-blue-600 to-purple-600 text-white hover:shadow-lg hover:scale-105"
+                  }`}
+                >
+                  {loading ? (
+                    <RotateCw className="w-5 h-5 sm:w-6 sm:h-6 animate-spin" />
+                  ) : (
+                    <Send className="w-5 h-5 sm:w-6 sm:h-6" />
+                  )}
+                </button>
+              </div>
+              <p className="text-xs text-gray-500 mt-2 text-center">
+                {pendingAction ? "Confirm your action" : "Ask me anything about products, orders, or support"}
+              </p>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
