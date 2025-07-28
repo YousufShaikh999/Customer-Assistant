@@ -4,6 +4,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { Sparkles, Send, RotateCw, X, MessageCircle, ChevronDown, ChevronUp } from "lucide-react";
 import DOMPurify from "dompurify";
 import { useRouter } from "next/navigation";
+import { useDebounce } from "use-debounce";
 
 interface Message {
   id: string;
@@ -32,15 +33,115 @@ const CustomerAssistant = () => {
     productId: string;
     productTitle: string;
   } | null>(null);
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [lastRefresh, setLastRefresh] = useState(Date.now());
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const router = useRouter();
+  const [debouncedMessages] = useDebounce(messages, 1000);
+
+  // Initialize chat from storage
+  useEffect(() => {
+    const savedSessionId = localStorage.getItem("chatSessionId");
+    const savedMessages = sessionStorage.getItem("chatMessages");
+    const chatWasOpen = sessionStorage.getItem("chatOpen");
+
+    if (savedSessionId) {
+      setSessionId(savedSessionId);
+    }
+
+    if (savedMessages) {
+      try {
+        const parsedMessages = JSON.parse(savedMessages);
+        if (Array.isArray(parsedMessages)) {
+          // Filter messages older than 5 minutes
+          const recentMessages = parsedMessages.filter((msg: any) => 
+            Date.now() - new Date(msg.timestamp).getTime() < 5 * 60 * 1000
+          );
+          setMessages(recentMessages.map((msg: any) => ({
+            ...msg,
+            timestamp: new Date(msg.timestamp)
+          })));
+        }
+      } catch (e) {
+        console.error("Failed to parse saved messages", e);
+      }
+    }
+
+    if (chatWasOpen === "true") {
+      setIsOpen(true);
+    }
+
+    // Set up periodic refresh
+    const refreshInterval = setInterval(() => {
+      refreshSession();
+    }, 5 * 60 * 1000); // 5 minutes
+
+    return () => clearInterval(refreshInterval);
+  }, []);
+
+  // Save messages to sessionStorage when they change
+  useEffect(() => {
+    if (debouncedMessages.length > 0) {
+      sessionStorage.setItem("chatMessages", JSON.stringify(debouncedMessages));
+    }
+  }, [debouncedMessages]);
+
+  // Scroll to bottom when messages change
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  const refreshSession = async () => {
+    try {
+      if (sessionId) {
+        const response = await fetch('/api/customer-assistant/refresh', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sessionId })
+        });
+        
+        if (response.ok) {
+          const data = await response.json();
+          if (data.newSessionId && data.newSessionId !== sessionId) {
+            setSessionId(data.newSessionId);
+            localStorage.setItem("chatSessionId", data.newSessionId);
+          }
+          setLastRefresh(Date.now());
+        }
+      }
+      
+      // Clean up old messages
+      setMessages(prev => {
+        const recentMessages = prev.filter(
+          msg => Date.now() - msg.timestamp.getTime() < 5 * 60 * 1000
+        );
+        sessionStorage.setItem("chatMessages", JSON.stringify(recentMessages));
+        return recentMessages;
+      });
+    } catch (err) {
+      console.error("Session refresh error:", err);
+    }
+  };
 
   const toggleChat = () => {
-    setIsOpen(!isOpen);
-    if (!isOpen) {
+    const newState = !isOpen;
+    setIsOpen(newState);
+    
+    if (newState) {
       sessionStorage.setItem("chatOpen", "true");
       setTimeout(() => inputRef.current?.focus(), 300);
+      
+      if (messages.length === 0) {
+        setTimeout(() => {
+          addMessage({
+            id: Date.now().toString(),
+            content: "Hello! 👋 How can I assist you with your shopping today?",
+            isUser: false,
+            timestamp: new Date(),
+          });
+        }, 500);
+      }
     } else {
       sessionStorage.removeItem("chatOpen");
     }
@@ -51,7 +152,12 @@ const CustomerAssistant = () => {
   };
 
   const addMessage = (message: Message) => {
-    setMessages((prev) => [...prev, message]);
+    setMessages(prev => {
+      const newMessages = [...prev, message];
+      sessionStorage.setItem("chatMessages", JSON.stringify(newMessages));
+      return newMessages;
+    });
+    
     if (!message.isUser) {
       setTypingIndicator(true);
       setTimeout(() => setTypingIndicator(false), 1000);
@@ -115,30 +221,6 @@ const CustomerAssistant = () => {
       document.removeEventListener("click", handleMessageClick);
     };
   }, []);
-
-  useEffect(() => {
-    if (isOpen && messages.length === 0) {
-      const hasWelcomeMessage = messages.some(
-        (msg) =>
-          msg.content.includes("Hello! How can I assist you today?") && !msg.isUser
-      );
-
-      if (!hasWelcomeMessage) {
-        setTimeout(() => {
-          addMessage({
-            id: Date.now().toString(),
-            content: "Hello! 👋 How can I assist you with your shopping today?",
-            isUser: false,
-            timestamp: new Date(),
-          });
-        }, 500);
-      }
-    }
-  }, [isOpen, messages]);
-
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
 
   const handleRedirect = (url: string) => {
     console.log("Redirecting to:", url);
@@ -205,12 +287,19 @@ const CustomerAssistant = () => {
             role: "assistant",
             content: m.content,
           })),
+          sessionId
         }),
       });
 
       if (!res.ok) throw new Error("Request failed");
 
       const data = await res.json();
+
+      // Update session ID if we got a new one
+      if (data.sessionId && data.sessionId !== sessionId) {
+        setSessionId(data.sessionId);
+        localStorage.setItem("chatSessionId", data.sessionId);
+      }
 
       if (data.redirect) {
         setTimeout(() => {
@@ -222,9 +311,6 @@ const CustomerAssistant = () => {
             timestamp: new Date(),
           };
           addMessage(aiMessage);
-
-          sessionStorage.setItem("chatMessages", JSON.stringify([...messages, userMessage, aiMessage]));
-          sessionStorage.setItem("chatOpen", "true");
         }, 1000);
         return;
       }
