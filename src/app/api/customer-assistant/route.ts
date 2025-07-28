@@ -1219,24 +1219,19 @@ Feel free to ask me specific questions about either product to help you decide!`
 }
 
 // New function to handle general questions with AI
-async function handleGeneralQuestion(query: string, history: ChatMessage[] = [], products: Product[] = []): Promise<{ reply: string; mentionedProducts?: Product[] }> {
+async function handleGeneralQuestion(query: string, history: ChatMessage[] = []): Promise<string> {
   try {
-    // Check if specific products are mentioned
-    const mentionedProducts = detectMentionedProducts(query, products);
-
-    const recentHistory = history.slice(-12);
+    // Get the last few messages (5-6 exchanges) from history
+    const recentHistory = history.slice(-12); // Last 12 messages (6 exchanges)
 
     const prompt = `You are a helpful shopping assistant for store named Plugin. 
     The user has asked: "${query}". 
-    -Plugin is a store that mostly sells card printers, projectors, customer services and electronics.
+    -Plugin is a store that only sells card printers, projectors, customer services and electronics if user about products apart of these, politely decline to answer.
     -Please provide a helpful response to this general question. 
     -Keep your response concise and friendly, and focus on being helpful to the shopper.
     -If you don't know the answer, suggest they rephrase or ask for more details.
     -If query is not about greeting, you, store, products, or shopping, politely decline to answer.
     -If they use abusive language, respond with a friendly reminder to keep the conversation respectful.
-    ${mentionedProducts.length > 0 ?
-        `-The user mentioned products that we have in stock: ${mentionedProducts.map(p => p.title).join(', ')}. 
-       -Acknowledge these products in your response but don't show details yet.` : ''}
     `;
 
     const completion = await services.openai.chat.completions.create({
@@ -1250,19 +1245,16 @@ async function handleGeneralQuestion(query: string, history: ChatMessage[] = [],
       temperature: 0.7,
     });
 
-    const aiReply = completion.choices[0]?.message?.content?.trim() ||
+    return completion.choices[0]?.message?.content?.trim() ||
       "I'm not sure how to answer that. Could you rephrase your question?";
-
-    return { reply: aiReply, mentionedProducts };
   } catch (error) {
     console.error("AI General Question Error:", error);
-    const mentionedProducts = detectMentionedProducts(query, products);
-    return {
-      reply: config.fallbackResponses[Math.floor(Math.random() * config.fallbackResponses.length)],
-      mentionedProducts
-    };
+    return config.fallbackResponses[
+      Math.floor(Math.random() * config.fallbackResponses.length)
+    ];
   }
 }
+
 
 function isRecommendationQuery(query: string): boolean {
   const recommendationKeywords = [
@@ -1481,13 +1473,9 @@ export async function POST(req: NextRequest): Promise<NextResponse<AssistantResp
         });
       }
 
-      const { reply: aiResponse, mentionedProducts } = await handleGeneralQuestion(query, currentHistory, mappedProducts);
+      const aiResponse = await handleGeneralQuestion(query, currentHistory);
       let finalReply = aiResponse;
 
-      if (mentionedProducts && mentionedProducts.length > 0) {
-        const customerQuery = extractProductSuggestionFromQuery(query);
-        finalReply += `\n\nIf you'd like to see these products, just type: "show me ${customerQuery}"`;
-      }
 
       session.history = manageConversationHistory(currentHistory, finalReply);
       return NextResponse.json({
