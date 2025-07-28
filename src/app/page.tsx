@@ -28,6 +28,7 @@ const CustomerAssistant = () => {
   const [error, setError] = useState("");
   const [isMinimized, setIsMinimized] = useState(false);
   const [typingIndicator, setTypingIndicator] = useState(false);
+  const [initialMessageShown, setInitialMessageShown] = useState(false);
   const [pendingAction, setPendingAction] = useState<{
     type: "buy" | "addToCart";
     productId: string;
@@ -54,14 +55,14 @@ const CustomerAssistant = () => {
       try {
         const parsedMessages = JSON.parse(savedMessages);
         if (Array.isArray(parsedMessages)) {
-          // Filter messages older than 5 minutes
-          const recentMessages = parsedMessages.filter((msg: any) => 
+          const recentMessages = parsedMessages.filter((msg: any) =>
             Date.now() - new Date(msg.timestamp).getTime() < 5 * 60 * 1000
           );
           setMessages(recentMessages.map((msg: any) => ({
             ...msg,
             timestamp: new Date(msg.timestamp)
           })));
+          setInitialMessageShown(true); // Mark as shown if we loaded messages
         }
       } catch (e) {
         console.error("Failed to parse saved messages", e);
@@ -79,6 +80,19 @@ const CustomerAssistant = () => {
 
     return () => clearInterval(refreshInterval);
   }, []);
+
+  useEffect(() => {
+    if (isOpen && messages.length === 0 && !initialMessageShown) {
+      const welcomeMessage = {
+        id: Date.now().toString(),
+        content: "Hello! 👋 I'm your shopping assistant. How can I help you today?",
+        isUser: false,
+        timestamp: new Date(),
+      };
+      addMessage(welcomeMessage);
+      setInitialMessageShown(true);
+    }
+  }, [isOpen, messages.length, initialMessageShown]);
 
   // Save messages to sessionStorage when they change
   useEffect(() => {
@@ -100,7 +114,7 @@ const CustomerAssistant = () => {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ sessionId })
         });
-        
+
         if (response.ok) {
           const data = await response.json();
           if (data.newSessionId && data.newSessionId !== sessionId) {
@@ -110,7 +124,7 @@ const CustomerAssistant = () => {
           setLastRefresh(Date.now());
         }
       }
-      
+
       // Clean up old messages
       setMessages(prev => {
         const recentMessages = prev.filter(
@@ -127,21 +141,10 @@ const CustomerAssistant = () => {
   const toggleChat = () => {
     const newState = !isOpen;
     setIsOpen(newState);
-    
+
     if (newState) {
       sessionStorage.setItem("chatOpen", "true");
       setTimeout(() => inputRef.current?.focus(), 300);
-      
-      if (messages.length === 0) {
-        setTimeout(() => {
-          addMessage({
-            id: Date.now().toString(),
-            content: "Hello! 👋 How can I assist you with your shopping today?",
-            isUser: false,
-            timestamp: new Date(),
-          });
-        }, 500);
-      }
     } else {
       sessionStorage.removeItem("chatOpen");
     }
@@ -157,7 +160,7 @@ const CustomerAssistant = () => {
       sessionStorage.setItem("chatMessages", JSON.stringify(newMessages));
       return newMessages;
     });
-    
+
     if (!message.isUser) {
       setTypingIndicator(true);
       setTimeout(() => setTypingIndicator(false), 1000);
@@ -414,25 +417,21 @@ const CustomerAssistant = () => {
                   className={`flex ${message.isUser ? "justify-end" : "justify-start"} transition-all duration-300 ease-out`}
                 >
                   <div
-                    className={`max-w-[85%] rounded-2xl p-3 sm:p-4 text-sm sm:text-base relative transition-all duration-300 ${
-                      message.isUser
-                        ? "bg-gradient-to-br from-blue-600 to-blue-500 text-white rounded-br-none shadow-lg"
-                        : "bg-white text-gray-800 rounded-bl-none shadow-md border border-gray-100"
-                    }`}
+                    className={`max-w-[85%] rounded-2xl p-3 sm:p-4 text-sm sm:text-base relative transition-all duration-300 ${message.isUser
+                      ? "bg-gradient-to-br from-blue-600 to-blue-500 text-white rounded-br-none shadow-lg"
+                      : "bg-white text-gray-800 rounded-bl-none shadow-md border border-gray-100"
+                      }`}
                   >
                     {renderMessageContent(message.content)}
                     <div className="absolute bottom-0 right-0 w-3 h-3 overflow-hidden">
-                      <div className={`absolute w-4 h-4 rounded-sm ${
-                        message.isUser ? "bg-blue-600" : "bg-white"
-                      } transform rotate-45 -right-1 -bottom-1 ${
-                        message.isUser 
-                          ? "shadow-[2px_2px_2px_rgba(0,0,0,0.1)]" 
+                      <div className={`absolute w-4 h-4 rounded-sm ${message.isUser ? "bg-blue-600" : "bg-white"
+                        } transform rotate-45 -right-1 -bottom-1 ${message.isUser
+                          ? "shadow-[2px_2px_2px_rgba(0,0,0,0.1)]"
                           : "shadow-[1px_1px_1px_rgba(0,0,0,0.1)] border border-gray-100"
-                      }`}></div>
+                        }`}></div>
                     </div>
-                    <p className={`text-xs mt-1 sm:mt-2 ${
-                      message.isUser ? "text-blue-100" : "text-gray-500"
-                    }`}>
+                    <p className={`text-xs mt-1 sm:mt-2 ${message.isUser ? "text-blue-100" : "text-gray-500"
+                      }`}>
                       {message.timestamp.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                     </p>
                   </div>
@@ -509,11 +508,10 @@ const CustomerAssistant = () => {
                 <button
                   onClick={handleSubmit}
                   disabled={loading || !input.trim()}
-                  className={`p-3 rounded-xl transition-all duration-200 ${
-                    loading || !input.trim()
-                      ? "bg-gray-300 text-gray-500"
-                      : "bg-gradient-to-br from-blue-600 to-purple-600 text-white hover:shadow-lg hover:scale-105"
-                  }`}
+                  className={`p-3 rounded-xl transition-all duration-200 ${loading || !input.trim()
+                    ? "bg-gray-300 text-gray-500"
+                    : "bg-gradient-to-br from-blue-600 to-purple-600 text-white hover:shadow-lg hover:scale-105"
+                    }`}
                 >
                   {loading ? (
                     <RotateCw className="w-5 h-5 sm:w-6 sm:h-6 animate-spin" />
