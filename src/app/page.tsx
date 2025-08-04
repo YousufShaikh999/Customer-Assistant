@@ -375,10 +375,10 @@ const CustomerAssistant = () => {
   }
 
   return (
-    <div className="fixed bottom-4 right-4 z-50 w-full max-w-[calc(100%-2rem)] sm:max-w-md md:max-w-lg lg:max-w-xl xl:max-w-2xl transition-all duration-300 ease-in-out">
-      <div className={`w-full ${isMinimized ? "h-16" : "h-[calc(100vh-8rem)] sm:h-[600px]"} bg-white shadow-2xl rounded-2xl overflow-hidden border border-gray-200 flex flex-col transition-all duration-300`}>
+    <div className="fixed inset-0 z-50 bg-white">
+      <div className="w-full h-full flex flex-col">
         {/* Chat header */}
-        <div className="bg-gradient-to-r from-blue-600 to-purple-600 text-white p-4 flex items-center justify-between rounded-t-xl cursor-pointer" onClick={toggleMinimize}>
+        <div className="bg-gradient-to-r from-blue-600 to-purple-600 text-white p-4 flex items-center justify-between cursor-pointer">
           <div className="flex items-center gap-2 sm:gap-3">
             <div className="relative">
               <Sparkles className="text-yellow-300 w-6 h-6 sm:w-7 sm:h-7 animate-pulse" />
@@ -471,7 +471,7 @@ const CustomerAssistant = () => {
             </div>
 
             {/* Input area */}
-            <div className="border-t border-gray-200 p-4 bg-white shadow-inner rounded-b-xl">
+            <div className="border-t border-gray-200 p-4 bg-white shadow-inner">
               {error && (
                 <div className="mb-2 sm:mb-3 p-3 bg-red-50 text-red-700 rounded-lg text-sm sm:text-base shadow-inner border border-red-100 flex items-start gap-2 transition-all duration-300">
                   <div className="bg-red-100 p-1 rounded-full">
