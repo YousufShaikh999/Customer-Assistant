@@ -360,12 +360,12 @@ const CustomerAssistant = () => {
     }
   };
 
-  if (!isOpen) {
+    if (!isOpen) {
     return (
       <div className="fixed bottom-8 right-8 z-50 transition-transform duration-300 hover:scale-110 active:scale-95">
         <button
           onClick={toggleChat}
-          className="bg-gradient-to-br from-blue-600 to-purple-600 text-white p-4 rounded-full shadow-xl hover:shadow-2xl transition-all duration-300 flex items-center justify-center relative group"
+          className="bg-gradient-to-br from-blue-600 to-purple-600 text-white p-4 rounded-full shadow-md hover:shadow-lg transition-all duration-300 flex items-center justify-center relative group"
           aria-label="Open chat"
         >
           <MessageCircle size={28} className="transition-transform group-hover:rotate-12" />
@@ -376,7 +376,7 @@ const CustomerAssistant = () => {
 
   return (
     <div className="fixed inset-0 z-50 bg-white">
-      <div className="w-full h-full flex flex-col">
+      <div className="w-full h-full flex flex-col rounded-lg shadow-sm overflow-hidden">
         {/* Chat header */}
         <div className="bg-gradient-to-r from-blue-600 to-purple-600 text-white p-4 flex items-center justify-between cursor-pointer">
           <div className="flex items-center gap-2 sm:gap-3">
@@ -418,16 +418,16 @@ const CustomerAssistant = () => {
                 >
                   <div
                     className={`max-w-[85%] rounded-2xl p-3 sm:p-4 text-sm sm:text-base relative transition-all duration-300 ${message.isUser
-                      ? "bg-gradient-to-br from-blue-600 to-blue-500 text-white rounded-br-none shadow-lg"
-                      : "bg-white text-gray-800 rounded-bl-none shadow-md border border-gray-100"
+                      ? "bg-gradient-to-br from-blue-600 to-blue-500 text-white rounded-br-none shadow"
+                      : "bg-white text-gray-800 rounded-bl-none shadow-sm border border-gray-100"
                       }`}
                   >
                     {renderMessageContent(message.content)}
                     <div className="absolute bottom-0 right-0 w-3 h-3 overflow-hidden">
                       <div className={`absolute w-4 h-4 rounded-sm ${message.isUser ? "bg-blue-600" : "bg-white"
                         } transform rotate-45 -right-1 -bottom-1 ${message.isUser
-                          ? "shadow-[2px_2px_2px_rgba(0,0,0,0.1)]"
-                          : "shadow-[1px_1px_1px_rgba(0,0,0,0.1)] border border-gray-100"
+                          ? "shadow-[1px_1px_1px_rgba(0,0,0,0.1)]"
+                          : "shadow-[0.5px_0.5px_0.5px_rgba(0,0,0,0.1)] border border-gray-100"
                         }`}></div>
                     </div>
                     <p className={`text-xs mt-1 sm:mt-2 ${message.isUser ? "text-blue-100" : "text-gray-500"
@@ -440,7 +440,7 @@ const CustomerAssistant = () => {
 
               {loading && (
                 <div className="flex justify-start">
-                  <div className="bg-white text-gray-800 rounded-2xl rounded-bl-none p-3 sm:p-4 max-w-[85%] shadow-md border border-gray-100">
+                  <div className="bg-white text-gray-800 rounded-2xl rounded-bl-none p-3 sm:p-4 max-w-[85%] shadow-sm border border-gray-100">
                     <div className="flex items-center gap-3 sm:gap-4">
                       <div className="flex space-x-1">
                         <div className="w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-full bg-blue-500 animate-bounce" />
@@ -455,7 +455,7 @@ const CustomerAssistant = () => {
 
               {typingIndicator && !loading && (
                 <div className="flex justify-start">
-                  <div className="bg-white text-gray-800 rounded-2xl rounded-bl-none p-3 sm:p-4 max-w-[85%] shadow-md border border-gray-100">
+                  <div className="bg-white text-gray-800 rounded-2xl rounded-bl-none p-3 sm:p-4 max-w-[85%] shadow-sm border border-gray-100">
                     <div className="flex items-center gap-2">
                       <div className="flex space-x-1">
                         <div className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-pulse" />
@@ -471,7 +471,7 @@ const CustomerAssistant = () => {
             </div>
 
             {/* Input area */}
-            <div className="border-t border-gray-200 p-4 bg-white shadow-inner">
+            <div className="border-t border-gray-200 p-4 bg-white shadow-inner rounded-b-lg">
               {error && (
                 <div className="mb-2 sm:mb-3 p-3 bg-red-50 text-red-700 rounded-lg text-sm sm:text-base shadow-inner border border-red-100 flex items-start gap-2 transition-all duration-300">
                   <div className="bg-red-100 p-1 rounded-full">
@@ -493,7 +493,7 @@ const CustomerAssistant = () => {
                         ? "Type 'yes' to confirm or anything else to cancel"
                         : "Type your message..."
                     }
-                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm sm:text-base pr-12"
+                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm sm:text-base pr-12"
                     disabled={loading}
                   />
                   {input && (
@@ -508,9 +508,9 @@ const CustomerAssistant = () => {
                 <button
                   onClick={handleSubmit}
                   disabled={loading || !input.trim()}
-                  className={`p-3 rounded-xl transition-all duration-200 ${loading || !input.trim()
+                  className={`p-3 rounded-lg transition-all duration-200 ${loading || !input.trim()
                     ? "bg-gray-300 text-gray-500"
-                    : "bg-gradient-to-br from-blue-600 to-purple-600 text-white hover:shadow-lg hover:scale-105"
+                    : "bg-gradient-to-br from-blue-600 to-purple-600 text-white hover:shadow-md hover:scale-105"
                     }`}
                 >
                   {loading ? (
